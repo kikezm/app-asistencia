@@ -188,19 +188,59 @@ else:
                     except Exception as e:
                         st.error(f"Error: {e}")
 
-        elif opcion == "Auditoría e Informes":
-            st.header("🕵️ Auditoría")
-            try:
-                sheet = conectar_google_sheets("Hoja 1")
-                datos = sheet.get_all_records()
-                if datos:
-                    df = pd.DataFrame(datos)
-                    df['Estado'] = df.apply(verificar_integridad, axis=1)
-                    st.dataframe(df)
-                    # (Aquí iría tu código de descarga Excel...)
-                else:
-                    st.warning("Sin datos.")
-            except Exception as e:
-                st.error(f"Error: {e}")
-    elif password:
-        st.error("Contraseña incorrecta")
+    elif opcion == "Auditoría e Informes":
+                st.header("🕵️ Auditoría de Seguridad")
+                
+                try:
+                    sheet = conectar_google_sheets("Hoja 1")
+                    datos = sheet.get_all_records()
+                    
+                    if datos:
+                        df = pd.DataFrame(datos)
+                        
+                        # 1. Calculamos la seguridad (Estado)
+                        df['Estado'] = df.apply(verificar_integridad, axis=1)
+                        
+                        # 2. Procesamos Fechas para poder ordenar
+                        df['FechaHora'] = pd.to_datetime(df['Fecha'] + ' ' + df['Hora'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+                        df = df.sort_values(by='FechaHora', ascending=False)
+                        
+                        # 3. REORDENAMOS LAS COLUMNAS (Aquí está el cambio que pediste)
+                        # Definimos el orden exacto que queremos ver en pantalla
+                        orden_visual = ['Fecha', 'Hora', 'Empleado', 'Tipo', 'Estado', 'Dispositivo']
+                        
+                        # Filtramos el DataFrame para que use ese orden
+                        # (Usamos reindex para evitar errores si alguna columna falta en registros viejos)
+                        df_visual = df.reindex(columns=orden_visual)
+                        
+                        # --- MÉTRICAS DE ALERTA ---
+                        manipulados = len(df[df['Estado'] == "⚠️ MANIPULADO"])
+                        
+                        if manipulados > 0:
+                            st.error(f"🚨 ALERTA: Se han detectado {manipulados} registros manipulados.")
+                        else:
+                            st.success("✅ Auditoría completada: Todos los registros son auténticos.")
+
+                        # --- VISUALIZACIÓN ---
+                        # Ahora df_visual tiene la columna Estado justo en el medio
+                        st.dataframe(df_visual, use_container_width=True)
+                        
+                        # --- DESCARGA EXCEL (CON TODOS LOS DATOS) ---
+                        buffer = io.BytesIO()
+                        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                            # En el Excel sí incluimos la firma por si acaso, al final
+                            cols_excel = ['Fecha', 'Hora', 'Empleado', 'Tipo', 'Estado', 'Dispositivo', 'Firma']
+                            df.reindex(columns=cols_excel).to_excel(writer, sheet_name='Auditoria', index=False)
+                            
+                        buffer.seek(0)
+                        st.download_button(
+                            label="📥 Descargar Auditoría Completa (.xlsx)",
+                            data=buffer,
+                            file_name=f"Auditoria_Seguridad_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                        
+                    else:
+                        st.warning("Sin datos para auditar.")
+                except Exception as e:
+                    st.error(f"Error cargando auditoría: {e}")
