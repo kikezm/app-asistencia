@@ -198,12 +198,16 @@ else:
                         if datos:
                             df = pd.DataFrame(datos)
                             
-                            # 1. CÁLCULOS (Mantenemos el cálculo interno para la tabla)
+                            # 1. PREPARACIÓN DE DATOS
                             df['Estado'] = df.apply(verificar_integridad, axis=1)
                             
-                            # Fechas
+                            # Convertir a formato fecha real
                             df['FechaHora'] = pd.to_datetime(df['Fecha'] + ' ' + df['Hora'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+                            
+                            # Ordenar del más reciente al más antiguo para la TABLA
                             df = df.sort_values(by='FechaHora', ascending=False)
+                            
+                            # Crear columna auxiliar Mes/Año
                             df['Mes_Año'] = df['FechaHora'].dt.strftime('%m/%Y')
                             
                             st.write("---")
@@ -231,20 +235,44 @@ else:
                             if filtro_empleado != "Todos":
                                 df_final = df_final[df_final['Empleado'] == filtro_empleado]
 
-                            # 4. ORDEN VISUAL (Sin métricas de alarma)
+                            # --- NUEVO BLOQUE: CÁLCULO DE HORAS TOTALES ---
+                            total_segundos = 0
+                            
+                            # Para calcular horas, necesitamos ordenar CRONOLÓGICAMENTE (Ascendente)
+                            # Iteramos por cada empleado presente en el filtro para no mezclar fichajes
+                            for emp in df_final['Empleado'].unique():
+                                df_calc = df_final[df_final['Empleado'] == emp].sort_values(by='FechaHora', ascending=True)
+                                entrada_temp = None
+                                
+                                for _, row in df_calc.iterrows():
+                                    if row['Tipo'] == 'ENTRADA':
+                                        entrada_temp = row['FechaHora']
+                                    elif row['Tipo'] == 'SALIDA' and entrada_temp is not None:
+                                        diferencia = (row['FechaHora'] - entrada_temp).total_seconds()
+                                        total_segundos += diferencia
+                                        entrada_temp = None
+                            
+                            # Convertimos segundos a Horas y Minutos
+                            horas_totales = int(total_segundos // 3600)
+                            minutos_totales = int((total_segundos % 3600) // 60)
+                            # -----------------------------------------------
+
+                            # 4. ORDEN VISUAL DE LA TABLA
                             orden_visual = ['Fecha', 'Hora', 'Empleado', 'Tipo', 'Estado', 'Dispositivo']
                             for col in orden_visual:
                                 if col not in df_final.columns: df_final[col] = ""
                             
                             df_visual = df_final.reindex(columns=orden_visual)
 
-                            # --- VISUALIZACIÓN LIMPIA ---
-                            # Simplemente mostramos cuántos datos hay, sin juzgar si son buenos o malos
-                            st.info(f"Mostrando **{len(df_final)}** registros.")
+                            # 5. VISUALIZACIÓN DE MÉTRICAS (¡Aquí sale el total!)
+                            col_kpi1, col_kpi2 = st.columns(2)
+                            
+                            col_kpi1.metric("Registros Encontrados", len(df_final))
+                            col_kpi2.metric("Horas Trabajadas (Selección)", f"{horas_totales}h {minutos_totales}m")
 
                             st.dataframe(df_visual, use_container_width=True)
                             
-                            # 5. DESCARGA
+                            # 6. DESCARGA
                             buffer = io.BytesIO()
                             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                                 df_visual.to_excel(writer, sheet_name='Reporte', index=False)
@@ -264,4 +292,3 @@ else:
                             st.warning("La base de datos está vacía.")
                     except Exception as e:
                         st.error(f"Error en auditoría: {e}")
-
