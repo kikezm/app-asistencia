@@ -7,7 +7,7 @@ import time
 import os
 import streamlit_javascript as st_js
 import io
-import uuid # Librería para generar códigos secretos únicos
+import uuid
 
 # --- CONFIGURACIÓN Y CONEXIÓN ---
 def conectar_google_sheets(nombre_hoja):
@@ -24,20 +24,31 @@ def conectar_google_sheets(nombre_hoja):
         st.stop()
     
     client = gspread.authorize(creds)
-    # Abrimos el archivo y seleccionamos la pestaña específica
     try:
+        # Intenta abrir la hoja específica
         sheet = client.open("Base de Datos Asistencia").worksheet(nombre_hoja)
         return sheet
     except gspread.WorksheetNotFound:
-        st.error(f"❌ No encuentro la pestaña '{nombre_hoja}'. Por favor créala en Google Sheets.")
+        # Si falla, avisa
+        st.error(f"❌ No encuentro la pestaña '{nombre_hoja}'. Verifica el nombre en Google Sheets.")
         st.stop()
 
-# --- FUNCIONES DE LÓGICA ---
+# --- FUNCIONES AUXILIARES ---
+def obtener_nombre_por_token(token):
+    try:
+        sheet_users = conectar_google_sheets("Usuarios")
+        records = sheet_users.get_all_records()
+        for row in records:
+            if str(row['ID']).strip() == str(token).strip():
+                return row['Nombre']
+        return None
+    except:
+        return None
 
 def registrar_fichaje(nombre, tipo, info_dispositivo):
     try:
-        sheet = conectar_google_sheets("Hoja 1") # La hoja de registros (por defecto suele ser Hoja 1 o sheet1)
-        # NOTA: Si cambiaste el nombre de la hoja de registros, ponlo aquí. Si es la primera, suele ser "Hoja 1" o "Sheet1"
+        # CAMBIA "Hoja 1" SI TU PESTAÑA DE DATOS SE LLAMA DISTINTO
+        sheet = conectar_google_sheets("Hoja 1") 
         
         ahora = datetime.now()
         fecha = ahora.strftime("%d/%m/%Y")
@@ -51,47 +62,25 @@ def registrar_fichaje(nombre, tipo, info_dispositivo):
     except Exception as e:
         st.error(f"❌ Error guardando datos: {e}")
 
-def obtener_nombre_por_token(token):
-    try:
-        sheet_users = conectar_google_sheets("Usuarios")
-        records = sheet_users.get_all_records()
-        for row in records:
-            if str(row['ID']) == str(token):
-                return row['Nombre']
-        return None
-    except:
-        return None
-
-def crear_nuevo_usuario(nombre_empleado):
-    try:
-        sheet_users = conectar_google_sheets("Usuarios")
-        # Generamos un ID único aleatorio
-        nuevo_id = str(uuid.uuid4())
-        sheet_users.append_row([nuevo_id, nombre_empleado])
-        return nuevo_id
-    except Exception as e:
-        st.error(f"Error creando usuario: {e}")
-        return None
-
 # --- INTERFAZ ---
 st.set_page_config(page_title="Control Asistencia", page_icon="🔒")
 
-# Captura de user agent
+# Detectar dispositivo
 try:
     ua_string = st_js.st_javascript("navigator.userAgent")
 except:
     ua_string = "Desconocido"
 
-# Capturamos el token de la URL
+# Detectar Token URL
 params = st.query_params
 token_acceso = params.get("token", None)
 
-st.title("🔒 Control de Asistencia Seguro")
+st.title("🔒 Control de Asistencia")
 
-# --- LÓGICA DE ACCESO ---
-
+# ==========================================
+# MODO EMPLEADO (ACCESO CON TOKEN)
+# ==========================================
 if token_acceso:
-    # 1. Validamos si el token existe en nuestra base de datos
     nombre_usuario = obtener_nombre_por_token(token_acceso)
     
     if nombre_usuario:
@@ -106,93 +95,166 @@ if token_acceso:
             if st.button("🔴 SALIDA", use_container_width=True):
                 registrar_fichaje(nombre_usuario, "SALIDA", ua_string)
     else:
-        st.error("⛔ ACCESO DENEGADO. El enlace no es válido o ha caducado.")
+        st.error("⛔ Token no válido o usuario no encontrado.")
 
+# ==========================================
+# MODO ADMINISTRADOR (LOGIN)
+# ==========================================
 else:
-    # --- MODO ADMIN ---
     st.sidebar.title("Administración")
     menu = ["Generar Usuarios", "Informes y Nóminas"]
     opcion = st.sidebar.radio("Ir a:", menu)
     
-    # Login simple
     password = st.sidebar.text_input("Contraseña Admin", type="password")
     
     if password == "admin123": # <--- TU CONTRASEÑA
         
-        # --- SECCIÓN 1: CREAR USUARIOS ---
+        # --- SECCIÓN: CREAR USUARIOS ---
         if opcion == "Generar Usuarios":
             st.header("👥 Gestión de Empleados")
-            st.write("Da de alta un empleado para generar su enlace único y secreto.")
             
             with st.form("nuevo_empleado"):
                 nuevo_nombre = st.text_input("Nombre Completo")
-                submit = st.form_submit_button("Crear Empleado y Generar Enlace")
+                submit = st.form_submit_button("Crear Empleado")
                 
                 if submit and nuevo_nombre:
-                    token_generado = crear_nuevo_usuario(nuevo_nombre)
-                    if token_generado:
-                        # URL Base (cámbiala por la tuya real)
-                        MI_URL = "https://tu-app-asistencia.streamlit.app" 
-                        link_seguro = f"{MI_URL}/?token={token_generado}"
+                    try:
+                        sheet_users = conectar_google_sheets("Usuarios")
+                        nuevo_id = str(uuid.uuid4())
+                        sheet_users.append_row([nuevo_id, nuevo_nombre])
                         
-                        st.success(f"✅ Usuario '{nuevo_nombre}' creado.")
-                        st.write("Envía este enlace PERSONAL e INTRANSFERIBLE:")
-                        st.code(link_seguro, language="text")
-                        st.warning("Guarda este enlace, si se pierde tendrás que consultar la hoja 'Usuarios'.")
+                        # CAMBIA ESTO POR TU URL REAL (COPIALA DEL NAVEGADOR)
+                        MI_URL_REAL = "https://tu-app-asistencia.streamlit.app"
+                        link = f"{MI_URL_REAL}/?token={nuevo_id}"
+                        
+                        st.success(f"Usuario {nuevo_nombre} creado.")
+                        st.code(link, language="text")
+                    except Exception as e:
+                        st.error(f"Error: {e}")
 
             st.write("---")
-            st.write("### Usuarios Activos")
+            st.write("### 📋 Usuarios Activos")
             try:
                 sheet_u = conectar_google_sheets("Usuarios")
-                st.dataframe(pd.DataFrame(sheet_u.get_all_records()))
+                df_u = pd.DataFrame(sheet_u.get_all_records())
+                st.dataframe(df_u)
             except:
-                st.info("No hay usuarios creados.")
+                st.info("No hay usuarios.")
 
-        # --- SECCIÓN 2: INFORMES (Igual que antes) ---
+        # --- SECCIÓN: INFORMES (CON PREVISUALIZACIÓN) ---
         elif opcion == "Informes y Nóminas":
-            st.header("📊 Descarga de Informes")
+            st.header("📊 Informes Mensuales")
             
             try:
-                # OJO: Aquí conectamos a la hoja de registros (probablemente "Hoja 1")
-                # Si tu pestaña de datos se llama "Sheet1" o de otra forma, revisa esto:
-                sheet = conectar_google_sheets("Hoja 1") 
+                sheet = conectar_google_sheets("Hoja 1") # Hoja de datos
                 datos = sheet.get_all_records()
                 
                 if datos:
                     df = pd.DataFrame(datos)
-                    # (Lógica de informes idéntica a la anterior...)
-                    # Procesamiento de fechas
+                    # Convertir fechas
                     df['FechaHora'] = pd.to_datetime(df['Fecha'] + ' ' + df['Hora'], format='%d/%m/%Y %H:%M:%S')
                     df = df.sort_values(by='FechaHora')
                     df['Mes_Año'] = df['FechaHora'].dt.strftime('%m/%Y')
                     
+                    # Filtros
                     col1, col2 = st.columns(2)
                     with col1:
                         lista_meses = sorted(df['Mes_Año'].unique().tolist(), reverse=True)
-                        mes_seleccionado = st.selectbox("Mes:", lista_meses)
+                        mes_seleccionado = st.selectbox("Selecciona Mes:", lista_meses)
                     
+                    # Filtrar DF por mes
                     df_mes = df[df['Mes_Año'] == mes_seleccionado].copy()
                     
                     with col2:
                         lista_empleados = ["TODOS (Resumen Global)"] + list(df_mes['Empleado'].unique())
-                        empleado_selec = st.selectbox("Empleado:", lista_empleados)
+                        empleado_selec = st.selectbox("Selecciona Empleado:", lista_empleados)
                     
-                    if st.button("Descargar Informe Excel"):
-                        buffer = io.BytesIO()
+                    st.write("---")
+                    
+                    # --- CÁLCULOS Y PREVISUALIZACIÓN ---
+                    buffer = io.BytesIO()
+                    
+                    # CASO A: TODOS LOS EMPLEADOS
+                    if empleado_selec == "TODOS (Resumen Global)":
+                        resumen_global = []
+                        for emp in df_mes['Empleado'].unique():
+                            df_emp = df_mes[df_mes['Empleado'] == emp].sort_values(by='FechaHora')
+                            segundos = 0
+                            entrada_pend = None
+                            for _, row in df_emp.iterrows():
+                                if row['Tipo'] == 'ENTRADA':
+                                    entrada_pend = row['FechaHora']
+                                elif row['Tipo'] == 'SALIDA' and entrada_pend:
+                                    segundos += (row['FechaHora'] - entrada_pend).total_seconds()
+                                    entrada_pend = None
+                            
+                            h = int(segundos // 3600)
+                            m = int((segundos % 3600) // 60)
+                            resumen_global.append({"Empleado": emp, "Horas Totales": f"{h}h {m}m"})
                         
-                        # LOGICA DE EXPORTACIÓN (Resumida para no hacer el código gigante, 
-                        # usa la misma lógica de cálculo de horas del paso anterior)
-                        # ... Aquí iría el bloque de cálculo de horas que ya tenías ...
-                        # Para simplificar este ejemplo, exportamos los datos crudos, 
-                        # pero puedes pegar aquí tu bloque de lógica anterior.
+                        df_preview = pd.DataFrame(resumen_global)
                         
+                        st.subheader(f"Vista Previa: {mes_seleccionado}")
+                        st.dataframe(df_preview, use_container_width=True) # <--- AQUÍ ESTÁ LA PREVISUALIZACIÓN
+                        
+                        # Preparar Excel
                         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                             df_mes.to_excel(writer, sheet_name='Datos', index=False)
-                             
-                        buffer.seek(0)
-                        st.download_button("📥 Descargar", buffer, f"Informe_{mes_seleccionado.replace('/','-')}.xlsx")
+                            df_preview.to_excel(writer, sheet_name='Resumen', index=False)
+                            df_mes.to_excel(writer, sheet_name='Datos Crudos', index=False)
+                            
+                        nombre_archivo = f"Global_{mes_seleccionado.replace('/','-')}.xlsx"
+
+                    # CASO B: UN EMPLEADO
+                    else:
+                        df_emp = df_mes[df_mes['Empleado'] == empleado_selec].sort_values(by='FechaHora')
+                        resumen_dias = []
+                        total_seg_mes = 0
+                        dias = df_emp['Fecha'].unique()
+                        
+                        for dia in dias:
+                            movs = df_emp[df_emp['Fecha'] == dia]
+                            seg_dia = 0
+                            ent_pend = None
+                            for _, row in movs.iterrows():
+                                if row['Tipo'] == 'ENTRADA':
+                                    ent_pend = row['FechaHora']
+                                elif row['Tipo'] == 'SALIDA' and ent_pend:
+                                    seg_dia += (row['FechaHora'] - ent_pend).total_seconds()
+                                    ent_pend = None
+                            
+                            h_dia = int(seg_dia // 3600)
+                            m_dia = int((seg_dia % 3600) // 60)
+                            total_seg_mes += seg_dia
+                            resumen_dias.append({"Fecha": dia, "Horas": f"{h_dia}h {m_dia}m"})
+                        
+                        df_preview = pd.DataFrame(resumen_dias)
+                        
+                        # Mostrar Totales
+                        th = int(total_seg_mes // 3600)
+                        tm = int((total_seg_mes % 3600) // 60)
+                        st.info(f"Total acumulado: **{th}h {tm}m**")
+                        
+                        st.subheader(f"Detalle Diario: {empleado_selec}")
+                        st.dataframe(df_preview, use_container_width=True) # <--- AQUÍ ESTÁ LA PREVISUALIZACIÓN
+                        
+                        # Preparar Excel
+                        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                            df_preview.to_excel(writer, sheet_name='Resumen Diario', index=False)
+                            df_emp.to_excel(writer, sheet_name='Fichajes', index=False)
+                            
+                        nombre_archivo = f"Nómina_{empleado_selec}_{mes_seleccionado.replace('/','-')}.xlsx"
+
+                    # BOTÓN DE DESCARGA
+                    buffer.seek(0)
+                    st.download_button(
+                        label="📥 Descargar Excel",
+                        data=buffer,
+                        file_name=nombre_archivo,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+
                 else:
-                    st.warning("Sin datos.")
+                    st.warning("No hay datos registrados aún.")
             except Exception as e:
                 st.error(f"Error cargando informes: {e}")
 
