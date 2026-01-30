@@ -198,28 +198,24 @@ else:
                         if datos:
                             df = pd.DataFrame(datos)
                             
-                            # 1. CÁLCULOS PREVIOS (Seguridad y Fechas)
-                            # Calculamos si el fichaje es válido o manipulado
+                            # 1. CÁLCULOS (Mantenemos el cálculo interno para la tabla)
                             df['Estado'] = df.apply(verificar_integridad, axis=1)
                             
-                            # Preparamos fechas para poder filtrar y ordenar
+                            # Fechas
                             df['FechaHora'] = pd.to_datetime(df['Fecha'] + ' ' + df['Hora'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
                             df = df.sort_values(by='FechaHora', ascending=False)
-                            df['Mes_Año'] = df['FechaHora'].dt.strftime('%m/%Y') # Columna auxiliar para el filtro
+                            df['Mes_Año'] = df['FechaHora'].dt.strftime('%m/%Y')
                             
                             st.write("---")
                             
-                            # 2. ZONA DE FILTROS (¡Recuperada!)
+                            # 2. FILTROS
                             col_filtros1, col_filtros2 = st.columns(2)
                             
                             with col_filtros1:
-                                # Filtro de Mes
                                 lista_meses = ["Todos"] + sorted(df['Mes_Año'].unique().tolist(), reverse=True)
                                 filtro_mes = st.selectbox("Filtrar por Mes:", lista_meses)
                             
                             with col_filtros2:
-                                # Filtro de Empleado
-                                # Si hemos filtrado mes, solo mostramos empleados de ese mes
                                 if filtro_mes != "Todos":
                                     empleados_disponibles = df[df['Mes_Año'] == filtro_mes]['Empleado'].unique()
                                 else:
@@ -228,52 +224,37 @@ else:
                                 lista_empleados = ["Todos"] + sorted(list(empleados_disponibles))
                                 filtro_empleado = st.selectbox("Filtrar por Empleado:", lista_empleados)
 
-                            # 3. APLICAMOS LOS FILTROS
+                            # 3. APLICAR FILTROS
                             df_final = df.copy()
-                            
                             if filtro_mes != "Todos":
-                                df_final = df_final[df_final['Mes_Año'] == filtro_mes]
-                            
+                                df_final = df_final[df_final['Mes_Año'] == filtro_mes] 
                             if filtro_empleado != "Todos":
                                 df_final = df_final[df_final['Empleado'] == filtro_empleado]
 
-                            # 4. ORDEN VISUAL DE COLUMNAS (Lo que pediste antes)
+                            # 4. ORDEN VISUAL (Sin métricas de alarma)
                             orden_visual = ['Fecha', 'Hora', 'Empleado', 'Tipo', 'Estado', 'Dispositivo']
-                            # Aseguramos que existan las columnas por si acaso
                             for col in orden_visual:
                                 if col not in df_final.columns: df_final[col] = ""
                             
                             df_visual = df_final.reindex(columns=orden_visual)
 
-                            # 5. MÉTRICAS Y VISUALIZACIÓN
-                            # Contamos manipulados solo de lo que estamos viendo (filtrado)
-                            manipulados = len(df_final[df_final['Estado'] == "⚠️ MANIPULADO"])
-                            total_registros = len(df_final)
-                            
-                            col_metric1, col_metric2 = st.columns(2)
-                            col_metric1.metric("Registros Encontrados", total_registros)
-                            if manipulados > 0:
-                                col_metric2.error(f"🚨 {manipulados} Manipulados")
-                            else:
-                                col_metric2.success("✅ Integridad 100%")
+                            # --- VISUALIZACIÓN LIMPIA ---
+                            # Simplemente mostramos cuántos datos hay, sin juzgar si son buenos o malos
+                            st.info(f"Mostrando **{len(df_final)}** registros.")
 
-                            # Tabla principal
                             st.dataframe(df_visual, use_container_width=True)
                             
-                            # 6. DESCARGA EXCEL
-                            # Descargamos exactamente lo que se ve filtrado
+                            # 5. DESCARGA
                             buffer = io.BytesIO()
                             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                                # Hoja principal limpia
                                 df_visual.to_excel(writer, sheet_name='Reporte', index=False)
-                                # Hoja con datos técnicos (Firma, etc) por si hace falta
                                 df_final.to_excel(writer, sheet_name='Datos_Completos', index=False)
                                 
                             buffer.seek(0)
                             nombre_archivo = f"Reporte_{filtro_empleado}_{filtro_mes.replace('/','-')}.xlsx"
                             
                             st.download_button(
-                                label="📥 Descargar Selección en Excel",
+                                label="📥 Descargar Excel",
                                 data=buffer,
                                 file_name=nombre_archivo,
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
