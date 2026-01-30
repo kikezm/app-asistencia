@@ -96,12 +96,14 @@ else:
 
 
 
+
+
     elif opcion == "Panel Admin":
-            st.subheader("🕵️ Panel de Control y Nóminas")
+            st.subheader("🕵️ Gestión de Nóminas y Horas")
             
             password = st.text_input("Contraseña de Acceso", type="password")
             
-            if password == "admin123": # <--- Tu contraseña
+            if password == "admin123": # <--- TU CONTRASEÑA
                 try:
                     sheet = conectar_google_sheets()
                     datos = sheet.get_all_records()
@@ -109,78 +111,134 @@ else:
                     if datos:
                         df = pd.DataFrame(datos)
                         
-                        # Procesamiento de fechas
+                        # 1. PREPARACIÓN DE DATOS (Crear columnas de fecha reales)
+                        # Unimos Fecha y Hora para poder ordenar cronológicamente
                         df['FechaHora'] = pd.to_datetime(df['Fecha'] + ' ' + df['Hora'], format='%d/%m/%Y %H:%M:%S')
                         df = df.sort_values(by='FechaHora')
                         
+                        # Creamos una columna "Mes" para el filtro (Ej: "01/2026")
+                        df['Mes_Año'] = df['FechaHora'].dt.strftime('%m/%Y')
+                        
                         st.write("---")
-                        st.write("### 📊 Informe Excel")
+                        st.write("### 📅 Configuración del Informe")
                         
-                        lista_empleados = list(df['Empleado'].unique())
-                        empleado_selec = st.selectbox("Selecciona Empleado:", lista_empleados)
+                        col1, col2 = st.columns(2)
                         
-                        if empleado_selec:
-                            df_emp = df[df['Empleado'] == empleado_selec].copy()
+                        with col1:
+                            # FILTRO 1: Seleccionar MES
+                            lista_meses = df['Mes_Año'].unique().tolist()
+                            # Ordenamos para que salga el mes más reciente primero
+                            lista_meses.sort(reverse=True) 
+                            mes_seleccionado = st.selectbox("1. Selecciona el Mes:", lista_meses)
+                        
+                        # Filtramos el DataFrame solo por ese mes
+                        df_mes = df[df['Mes_Año'] == mes_seleccionado].copy()
+                        
+                        with col2:
+                            # FILTRO 2: Seleccionar EMPLEADO (o TODOS)
+                            lista_empleados = ["TODOS (Resumen Global)"] + list(df_mes['Empleado'].unique())
+                            empleado_selec = st.selectbox("2. Selecciona Empleado:", lista_empleados)
+                        
+                        # --- LÓGICA DE CÁLCULO ---
+                        
+                        if st.button(f"📊 Generar Informe de {mes_seleccionado}"):
                             
-                            # --- CÁLCULO DE HORAS ---
-                            resumen_data = []
-                            entrada_temp = None
-                            dias_unicos = df_emp['Fecha'].unique()
-                            total_seconds = 0
-                            
-                            for dia in dias_unicos:
-                                movimientos_dia = df_emp[df_emp['Fecha'] == dia].sort_values(by='FechaHora')
-                                segundos_dia = 0
-                                entrada_pendiente = None
-                                
-                                for index, row in movimientos_dia.iterrows():
-                                    if row['Tipo'] == 'ENTRADA':
-                                        entrada_pendiente = row['FechaHora']
-                                    elif row['Tipo'] == 'SALIDA' and entrada_pendiente is not None:
-                                        diferencia = row['FechaHora'] - entrada_pendiente
-                                        segundos_dia += diferencia.total_seconds()
-                                        entrada_pendiente = None
-                                
-                                # Formato horas:minutos
-                                horas = int(segundos_dia // 3600)
-                                minutos = int((segundos_dia % 3600) // 60)
-                                
-                                total_seconds += segundos_dia
-                                
-                                resumen_data.append({
-                                    "Fecha": dia,
-                                    "Horas Trabajadas": f"{horas}h {minutos}m",
-                                    "Detalle": f"{horas}:{minutos:02d}" # Formato útil para Excel
-                                })
-                            
-                            df_resumen = pd.DataFrame(resumen_data)
-                            
-                            # Totales generales
-                            tot_h = int(total_seconds // 3600)
-                            tot_m = int((total_seconds % 3600) // 60)
-                            
-                            st.info(f"Resumen para **{empleado_selec}**: {tot_h}h {tot_m}m totales.")
-                            
-                            # --- GENERACIÓN DEL EXCEL (En Memoria) ---
                             buffer = io.BytesIO()
                             
-                            # Usamos ExcelWriter para crear múltiples hojas
-                            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                                # Hoja 1: El Resumen limpio
-                                df_resumen.to_excel(writer, sheet_name='Resumen Horas', index=False)
+                            # CASO A: INFORME GLOBAL (TODOS LOS EMPLEADOS)
+                            if empleado_selec == "TODOS (Resumen Global)":
                                 
-                                # Hoja 2: Los datos crudos (auditoría)
-                                # Limpiamos columnas que no sirven para el reporte
-                                df_emp_clean = df_emp[['Fecha', 'Hora', 'Tipo', 'Dispositivo']]
-                                df_emp_clean.to_excel(writer, sheet_name='Detalle Fichajes', index=False)
+                                resumen_global = []
+                                empleados_mes = df_mes['Empleado'].unique()
                                 
-                            # Preparamos el archivo para descargar
+                                for emp in empleados_mes:
+                                    # Calculamos horas para cada empleado
+                                    df_emp = df_mes[df_mes['Empleado'] == emp].sort_values(by='FechaHora')
+                                    segundos_totales = 0
+                                    entrada_pendiente = None
+                                    
+                                    for _, row in df_emp.iterrows():
+                                        if row['Tipo'] == 'ENTRADA':
+                                            entrada_pendiente = row['FechaHora']
+                                        elif row['Tipo'] == 'SALIDA' and entrada_pendiente:
+                                            diff = (row['FechaHora'] - entrada_pendiente).total_seconds()
+                                            segundos_totales += diff
+                                            entrada_pendiente = None
+                                    
+                                    # Formato horas
+                                    horas = int(segundos_totales // 3600)
+                                    minutos = int((segundos_totales % 3600) // 60)
+                                    
+                                    resumen_global.append({
+                                        "Empleado": emp,
+                                        "Horas Totales": f"{horas}h {minutos}m",
+                                        "Segundos": segundos_totales # Oculto para cálculos
+                                    })
+                                
+                                df_global = pd.DataFrame(resumen_global)
+                                
+                                # Mostrar en pantalla
+                                st.write(f"#### Resumen de Horas - {mes_seleccionado}")
+                                st.dataframe(df_global[['Empleado', 'Horas Totales']])
+                                
+                                # Generar Excel Global
+                                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                                    df_global[['Empleado', 'Horas Totales']].to_excel(writer, sheet_name='Resumen Nómina', index=False)
+                                    df_mes[['Fecha', 'Hora', 'Empleado', 'Tipo', 'Dispositivo']].to_excel(writer, sheet_name='Detalle Bruto', index=False)
+                                    
+                                nombre_archivo = f"Resumen_Global_{mes_seleccionado.replace('/','-')}.xlsx"
+
+                            # CASO B: INFORME INDIVIDUAL (DETALLADO POR DÍA)
+                            else:
+                                df_emp = df_mes[df_mes['Empleado'] == empleado_selec].sort_values(by='FechaHora')
+                                
+                                resumen_dias = []
+                                dias_unicos = df_emp['Fecha'].unique()
+                                total_seconds_mes = 0
+                                
+                                for dia in dias_unicos:
+                                    movs_dia = df_emp[df_emp['Fecha'] == dia]
+                                    segs_dia = 0
+                                    entrada_pendiente = None
+                                    
+                                    for _, row in movs_dia.iterrows():
+                                        if row['Tipo'] == 'ENTRADA':
+                                            entrada_pendiente = row['FechaHora']
+                                        elif row['Tipo'] == 'SALIDA' and entrada_pendiente:
+                                            diff = (row['FechaHora'] - entrada_pendiente).total_seconds()
+                                            segs_dia += diff
+                                            entrada_pendiente = None
+                                    
+                                    h_dia = int(segs_dia // 3600)
+                                    m_dia = int((segs_dia % 3600) // 60)
+                                    total_seconds_mes += segs_dia
+                                    
+                                    resumen_dias.append({
+                                        "Fecha": dia,
+                                        "Horas Trabajadas": f"{h_dia}h {m_dia}m"
+                                    })
+                                
+                                df_individual = pd.DataFrame(resumen_dias)
+                                
+                                # Totales
+                                th = int(total_seconds_mes // 3600)
+                                tm = int((total_seconds_mes % 3600) // 60)
+                                st.info(f"Total mensual de **{empleado_selec}**: {th}h {tm}m")
+                                st.dataframe(df_individual)
+                                
+                                # Generar Excel Individual
+                                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                                    df_individual.to_excel(writer, sheet_name='Diario', index=False)
+                                    df_emp[['Fecha', 'Hora', 'Tipo', 'Dispositivo']].to_excel(writer, sheet_name='Fichajes', index=False)
+                                
+                                nombre_archivo = f"Informe_{empleado_selec}_{mes_seleccionado.replace('/','-')}.xlsx"
+
+                            # BOTÓN DE DESCARGA COMÚN
                             buffer.seek(0)
-                            
                             st.download_button(
-                                label=f"📥 Descargar Excel de {empleado_selec}",
+                                label=f"📥 Descargar Excel ({mes_seleccionado})",
                                 data=buffer,
-                                file_name=f"Asistencia_{empleado_selec}.xlsx",
+                                file_name=nombre_archivo,
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                             )
 
