@@ -189,7 +189,7 @@ else:
                         st.error(f"Error: {e}")
 
         elif opcion == "Auditoría e Informes":
-                    st.header("🕵️ Auditoría de Seguridad")
+                    st.header("🕵️ Auditoría y Control")
                     
                     try:
                         sheet = conectar_google_sheets("Hoja 1")
@@ -198,49 +198,89 @@ else:
                         if datos:
                             df = pd.DataFrame(datos)
                             
-                            # 1. Calculamos la seguridad (Estado)
+                            # 1. CÁLCULOS PREVIOS (Seguridad y Fechas)
+                            # Calculamos si el fichaje es válido o manipulado
                             df['Estado'] = df.apply(verificar_integridad, axis=1)
                             
-                            # 2. Procesamos Fechas para poder ordenar
+                            # Preparamos fechas para poder filtrar y ordenar
                             df['FechaHora'] = pd.to_datetime(df['Fecha'] + ' ' + df['Hora'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
                             df = df.sort_values(by='FechaHora', ascending=False)
+                            df['Mes_Año'] = df['FechaHora'].dt.strftime('%m/%Y') # Columna auxiliar para el filtro
                             
-                            # 3. REORDENAMOS LAS COLUMNAS (Aquí está el cambio que pediste)
-                            # Definimos el orden exacto que queremos ver en pantalla
-                            orden_visual = ['Fecha', 'Hora', 'Empleado', 'Tipo', 'Estado', 'Dispositivo']
+                            st.write("---")
                             
-                            # Filtramos el DataFrame para que use ese orden
-                            # (Usamos reindex para evitar errores si alguna columna falta en registros viejos)
-                            df_visual = df.reindex(columns=orden_visual)
+                            # 2. ZONA DE FILTROS (¡Recuperada!)
+                            col_filtros1, col_filtros2 = st.columns(2)
                             
-                            # --- MÉTRICAS DE ALERTA ---
-                            manipulados = len(df[df['Estado'] == "⚠️ MANIPULADO"])
+                            with col_filtros1:
+                                # Filtro de Mes
+                                lista_meses = ["Todos"] + sorted(df['Mes_Año'].unique().tolist(), reverse=True)
+                                filtro_mes = st.selectbox("Filtrar por Mes:", lista_meses)
                             
-                            if manipulados > 0:
-                                st.error(f"🚨 ALERTA: Se han detectado {manipulados} registros manipulados.")
-                            else:
-                                st.success("✅ Auditoría completada: Todos los registros son auténticos.")
+                            with col_filtros2:
+                                # Filtro de Empleado
+                                # Si hemos filtrado mes, solo mostramos empleados de ese mes
+                                if filtro_mes != "Todos":
+                                    empleados_disponibles = df[df['Mes_Año'] == filtro_mes]['Empleado'].unique()
+                                else:
+                                    empleados_disponibles = df['Empleado'].unique()
+                                    
+                                lista_empleados = ["Todos"] + sorted(list(empleados_disponibles))
+                                filtro_empleado = st.selectbox("Filtrar por Empleado:", lista_empleados)
 
-                            # --- VISUALIZACIÓN ---
-                            # Ahora df_visual tiene la columna Estado justo en el medio
+                            # 3. APLICAMOS LOS FILTROS
+                            df_final = df.copy()
+                            
+                            if filtro_mes != "Todos":
+                                df_final = df_final[df_final['Mes_Año'] == filtro_mes]
+                            
+                            if filtro_empleado != "Todos":
+                                df_final = df_final[df_final['Empleado'] == filtro_empleado]
+
+                            # 4. ORDEN VISUAL DE COLUMNAS (Lo que pediste antes)
+                            orden_visual = ['Fecha', 'Hora', 'Empleado', 'Tipo', 'Estado', 'Dispositivo']
+                            # Aseguramos que existan las columnas por si acaso
+                            for col in orden_visual:
+                                if col not in df_final.columns: df_final[col] = ""
+                            
+                            df_visual = df_final.reindex(columns=orden_visual)
+
+                            # 5. MÉTRICAS Y VISUALIZACIÓN
+                            # Contamos manipulados solo de lo que estamos viendo (filtrado)
+                            manipulados = len(df_final[df_final['Estado'] == "⚠️ MANIPULADO"])
+                            total_registros = len(df_final)
+                            
+                            col_metric1, col_metric2 = st.columns(2)
+                            col_metric1.metric("Registros Encontrados", total_registros)
+                            if manipulados > 0:
+                                col_metric2.error(f"🚨 {manipulados} Manipulados")
+                            else:
+                                col_metric2.success("✅ Integridad 100%")
+
+                            # Tabla principal
                             st.dataframe(df_visual, use_container_width=True)
                             
-                            # --- DESCARGA EXCEL (CON TODOS LOS DATOS) ---
+                            # 6. DESCARGA EXCEL
+                            # Descargamos exactamente lo que se ve filtrado
                             buffer = io.BytesIO()
                             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                                # En el Excel sí incluimos la firma por si acaso, al final
-                                cols_excel = ['Fecha', 'Hora', 'Empleado', 'Tipo', 'Estado', 'Dispositivo', 'Firma']
-                                df.reindex(columns=cols_excel).to_excel(writer, sheet_name='Auditoria', index=False)
+                                # Hoja principal limpia
+                                df_visual.to_excel(writer, sheet_name='Reporte', index=False)
+                                # Hoja con datos técnicos (Firma, etc) por si hace falta
+                                df_final.to_excel(writer, sheet_name='Datos_Completos', index=False)
                                 
                             buffer.seek(0)
+                            nombre_archivo = f"Reporte_{filtro_empleado}_{filtro_mes.replace('/','-')}.xlsx"
+                            
                             st.download_button(
-                                label="📥 Descargar Auditoría Completa (.xlsx)",
+                                label="📥 Descargar Selección en Excel",
                                 data=buffer,
-                                file_name=f"Auditoria_Seguridad_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+                                file_name=nombre_archivo,
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                             )
                             
                         else:
-                            st.warning("Sin datos para auditar.")
+                            st.warning("La base de datos está vacía.")
                     except Exception as e:
-                        st.error(f"Error cargando auditoría: {e}")
+                        st.error(f"Error en auditoría: {e}")
+
