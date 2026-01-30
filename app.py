@@ -90,18 +90,59 @@ else:
             st.success("Enlace generado correctamente (sin espacios):")
             st.code(link, language="text")
             st.caption("Copia este enlace y envíaselo al trabajador.")
-
     elif opcion == "Panel Admin":
-        st.subheader("🕵️ Panel de Control")
-        password = st.text_input("Contraseña", type="password")
-        
-        if password == "admin123":
-            try:
-                sheet = conectar_google_sheets()
-                datos = sheet.get_all_records()
-                df = pd.DataFrame(datos)
-                st.dataframe(df.tail(5))
-                csv = df.to_csv(index=False).encode('utf-8')
-                st.download_button("📥 Descargar Todo", csv, "asistencia.csv", "text/csv")
-            except:
-                st.warning("Sin datos aún.")
+            st.subheader("🕵️ Panel de Control")
+            
+            # --- CAMBIA TU CONTRASEÑA AQUÍ ---
+            password = st.text_input("Contraseña de Acceso", type="password")
+            
+            if password == "1234": # <--- Pon aquí tu contraseña real
+                try:
+                    sheet = conectar_google_sheets()
+                    datos = sheet.get_all_records()
+                    
+                    if datos:
+                        df = pd.DataFrame(datos)
+                        
+                        # --- FILTROS DE INFORME ---
+                        st.write("---")
+                        st.write("### 📊 Generar Informe")
+                        
+                        col_filtro1, col_filtro2 = st.columns(2)
+                        
+                        with col_filtro1:
+                            # Filtro por Empleado
+                            lista_empleados = ["Todos"] + list(df['Empleado'].unique())
+                            filtro_empleado = st.selectbox("Filtrar por Empleado:", lista_empleados)
+                        
+                        with col_filtro2:
+                            # Filtro por Tipo (Entrada/Salida) - Opcional
+                            filtro_tipo = st.selectbox("Tipo de movimiento:", ["Todos", "ENTRADA", "SALIDA"])
+                        
+                        # Aplicar filtros
+                        df_final = df.copy()
+                        if filtro_empleado != "Todos":
+                            df_final = df_final[df_final['Empleado'] == filtro_empleado]
+                        if filtro_tipo != "Todos":
+                            df_final = df_final[df_final['Tipo'] == filtro_tipo]
+                        
+                        # Mostrar vista previa
+                        st.write(f"Mostrando {len(df_final)} registros:")
+                        st.dataframe(df_final)
+                        
+                        # Botón de Descarga
+                        csv = df_final.to_csv(index=False).encode('utf-8')
+                        fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+                        nombre_archivo = f"informe_{filtro_empleado}_{fecha_hoy}.csv"
+                        
+                        st.download_button(
+                            label="📥 Descargar Informe Filtrado",
+                            data=csv,
+                            file_name=nombre_archivo,
+                            mime="text/csv"
+                        )
+                    else:
+                        st.warning("La base de datos está vacía.")
+                except Exception as e:
+                    st.error(f"Error cargando datos: {e}")
+
