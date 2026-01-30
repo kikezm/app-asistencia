@@ -124,7 +124,7 @@ else:
                         sheet_users.append_row([nuevo_id, nuevo_nombre])
                         
                         # CAMBIA ESTO POR TU URL REAL (COPIALA DEL NAVEGADOR)
-                        MI_URL_REAL = "https://tu-app-asistencia.streamlit.app"
+                        MI_URL_REAL = "https://app-asistencia-dknejmfedu4pswfrqf7prc.streamlit.app/"
                         link = f"{MI_URL_REAL}/?token={nuevo_id}"
                         
                         st.success(f"Usuario {nuevo_nombre} creado.")
