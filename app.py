@@ -5,7 +5,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 import time
 import os
-import streamlit_javascript as st_js # Nueva librería para detectar dispositivo
+import streamlit_javascript as st_js
+import urllib.parse # <--- NUEVA LIBRERÍA PARA ARREGLAR ESPACIOS
 
 # --- CONFIGURACIÓN Y CONEXIÓN A GOOGLE ---
 def conectar_google_sheets():
@@ -33,7 +34,6 @@ def registrar_fichaje(nombre, tipo, info_dispositivo):
         fecha = ahora.strftime("%d/%m/%Y")
         hora = ahora.strftime("%H:%M:%S")
         
-        # Guardamos: Fecha, Hora, Nombre, Tipo, Dispositivo
         sheet.append_row([fecha, hora, nombre, tipo, info_dispositivo])
         
         st.success(f"✅ {tipo} registrada para {nombre}")
@@ -46,21 +46,20 @@ def registrar_fichaje(nombre, tipo, info_dispositivo):
 # --- INTERFAZ ---
 st.set_page_config(page_title="Control Asistencia", page_icon="🕒")
 
-# Obtener información del navegador (User Agent) con JavaScript
-ua_string = st_js.st_javascript("navigator.userAgent")
+try:
+    ua_string = st_js.st_javascript("navigator.userAgent")
+except:
+    ua_string = "Desconocido"
 
-# Detectar usuario desde el enlace (URL)
-# Busca si hay un ?empleado=Juan en la url
+# Captura el parámetro y arregla los caracteres especiales
 params = st.query_params
 usuario_url = params.get("empleado", None)
 
 st.title("🕒 Control de Asistencia")
 
-# LÓGICA DE USUARIO
 if usuario_url:
-    # --- MODO EMPLEADO (Enlace personalizado) ---
+    # --- MODO EMPLEADO ---
     st.info(f"👋 Hola, **{usuario_url}**")
-    st.write("Registra tu movimiento:")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -71,21 +70,26 @@ if usuario_url:
             registrar_fichaje(usuario_url, "SALIDA", ua_string)
 
 else:
-    # --- MODO GENERAL / ADMIN ---
+    # --- MODO ADMIN ---
     menu = ["Panel Admin", "Generador de Enlaces"]
     opcion = st.sidebar.selectbox("Menú", menu)
     
     if opcion == "Generador de Enlaces":
-        st.subheader("🔗 Crear enlace para trabajador")
-        st.write("Escribe el nombre del trabajador para generar su enlace único.")
-        nuevo_nombre = st.text_input("Nombre del Empleado")
+        st.subheader("🔗 Crear enlace seguro")
+        nuevo_nombre = st.text_input("Nombre y Apellidos del Empleado")
+        
+        # --- AQUÍ ES DONDE DEBES PONER TU URL REAL ---
+        # Borra la de abajo y pega la tuya:
+        MI_URL_REAL = "https://app-asistencia-dknejmfedu4pswfrqf7prc.streamlit.app/" 
         
         if nuevo_nombre:
-            # Crea la URL base (truco para saber la url actual)
-            base_url = "https://app-asistencia.streamlit.app" # CAMBIA ESTO SI TU URL ES OTRA
-            link = f"{base_url}/?empleado={nuevo_nombre}"
+            # Esto convierte "María Serrano" en "Mar%C3%ADa%20Serrano"
+            nombre_seguro = urllib.parse.quote(nuevo_nombre)
+            link = f"{MI_URL_REAL}/?empleado={nombre_seguro}"
+            
+            st.success("Enlace generado correctamente (sin espacios):")
             st.code(link, language="text")
-            st.caption("Copia este enlace y envíaselo por WhatsApp a ese trabajador.")
+            st.caption("Copia este enlace y envíaselo al trabajador.")
 
     elif opcion == "Panel Admin":
         st.subheader("🕵️ Panel de Control")
@@ -96,12 +100,8 @@ else:
                 sheet = conectar_google_sheets()
                 datos = sheet.get_all_records()
                 df = pd.DataFrame(datos)
-                
-                st.write("### Últimos fichajes")
                 st.dataframe(df.tail(5))
-                
-                # Descarga
                 csv = df.to_csv(index=False).encode('utf-8')
                 st.download_button("📥 Descargar Todo", csv, "asistencia.csv", "text/csv")
             except:
-                st.warning("No hay datos o error de conexión.")
+                st.warning("Sin datos aún.")
