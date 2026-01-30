@@ -7,6 +7,7 @@ import time
 import os
 import streamlit_javascript as st_js
 import urllib.parse # <--- NUEVA LIBRERÍA PARA ARREGLAR ESPACIOS
+import io
 
 # --- CONFIGURACIÓN Y CONEXIÓN A GOOGLE ---
 def conectar_google_sheets():
@@ -90,13 +91,17 @@ else:
             st.success("Enlace generado correctamente (sin espacios):")
             st.code(link, language="text")
             st.caption("Copia este enlace y envíaselo al trabajador.")
+
+
+
+
+
     elif opcion == "Panel Admin":
             st.subheader("🕵️ Panel de Control y Nóminas")
             
-            # --- CAMBIA TU CONTRASEÑA AQUÍ ---
             password = st.text_input("Contraseña de Acceso", type="password")
             
-            if password == "admin123": # <--- Pon aquí tu contraseña
+            if password == "admin123": # <--- Tu contraseña
                 try:
                     sheet = conectar_google_sheets()
                     datos = sheet.get_all_records()
@@ -104,88 +109,82 @@ else:
                     if datos:
                         df = pd.DataFrame(datos)
                         
-                        # Convertimos las columnas de fecha y hora a formato que Python entienda
-                        # Creamos una columna temporal "FechaHora" para ordenar
+                        # Procesamiento de fechas
                         df['FechaHora'] = pd.to_datetime(df['Fecha'] + ' ' + df['Hora'], format='%d/%m/%Y %H:%M:%S')
-                        df = df.sort_values(by='FechaHora') # Ordenamos cronológicamente
+                        df = df.sort_values(by='FechaHora')
                         
                         st.write("---")
-                        st.write("### 📊 Generar Informe de Horas")
+                        st.write("### 📊 Informe Excel")
                         
-                        # 1. Seleccionar Empleado
                         lista_empleados = list(df['Empleado'].unique())
-                        empleado_selec = st.selectbox("Selecciona Empleado para calcular horas:", lista_empleados)
+                        empleado_selec = st.selectbox("Selecciona Empleado:", lista_empleados)
                         
                         if empleado_selec:
-                            # Filtramos solo los datos de ese empleado
                             df_emp = df[df['Empleado'] == empleado_selec].copy()
                             
-                            # --- ALGORITMO DE CÁLCULO DE HORAS ---
+                            # --- CÁLCULO DE HORAS ---
                             resumen_data = []
                             entrada_temp = None
-                            
-                            # Agrupamos por día
                             dias_unicos = df_emp['Fecha'].unique()
-                            
-                            total_horas_periodo = 0
+                            total_seconds = 0
                             
                             for dia in dias_unicos:
-                                # Filtramos los movimientos de ESE día
                                 movimientos_dia = df_emp[df_emp['Fecha'] == dia].sort_values(by='FechaHora')
-                                
-                                segundos_trabajados_dia = 0
+                                segundos_dia = 0
                                 entrada_pendiente = None
                                 
                                 for index, row in movimientos_dia.iterrows():
                                     if row['Tipo'] == 'ENTRADA':
                                         entrada_pendiente = row['FechaHora']
-                                    
                                     elif row['Tipo'] == 'SALIDA' and entrada_pendiente is not None:
-                                        # Calculamos la diferencia
                                         diferencia = row['FechaHora'] - entrada_pendiente
-                                        segundos = diferencia.total_seconds()
-                                        segundos_trabajados_dia += segundos
-                                        entrada_pendiente = None # Reseteamos para el siguiente turno (si hay pausa comida)
+                                        segundos_dia += diferencia.total_seconds()
+                                        entrada_pendiente = None
                                 
-                                # Convertir segundos a Horas:Minutos
-                                horas = int(segundos_trabajados_dia // 3600)
-                                minutos = int((segundos_trabajados_dia % 3600) // 60)
-                                texto_tiempo = f"{horas}h {minutos}m"
+                                # Formato horas:minutos
+                                horas = int(segundos_dia // 3600)
+                                minutos = int((segundos_dia % 3600) // 60)
                                 
-                                total_horas_periodo += segundos_trabajados_dia
+                                total_seconds += segundos_dia
                                 
                                 resumen_data.append({
                                     "Fecha": dia,
-                                    "Horas Trabajadas": texto_tiempo,
-                                    "Segundos (Cálculo)": segundos_trabajados_dia # Oculto, para excel
+                                    "Horas Trabajadas": f"{horas}h {minutos}m",
+                                    "Detalle": f"{horas}:{minutos:02d}" # Formato útil para Excel
                                 })
                             
-                            # Crear DataFrame del Resumen
                             df_resumen = pd.DataFrame(resumen_data)
                             
-                            # Mostrar métricas en pantalla
-                            horas_totales = int(total_horas_periodo // 3600)
-                            minutos_totales = int((total_horas_periodo % 3600) // 60)
+                            # Totales generales
+                            tot_h = int(total_seconds // 3600)
+                            tot_m = int((total_seconds % 3600) // 60)
                             
-                            st.info(f"📅 Resumen para **{empleado_selec}**")
-                            st.metric("Total Horas Acumuladas", f"{horas_totales}h {minutos_totales}m")
+                            st.info(f"Resumen para **{empleado_selec}**: {tot_h}h {tot_m}m totales.")
                             
-                            st.table(df_resumen[['Fecha', 'Horas Trabajadas']])
+                            # --- GENERACIÓN DEL EXCEL (En Memoria) ---
+                            buffer = io.BytesIO()
                             
-                            # Botón Descargar Resumen
-                            csv_resumen = df_resumen.to_csv(index=False).encode('utf-8')
+                            # Usamos ExcelWriter para crear múltiples hojas
+                            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                                # Hoja 1: El Resumen limpio
+                                df_resumen.to_excel(writer, sheet_name='Resumen Horas', index=False)
+                                
+                                # Hoja 2: Los datos crudos (auditoría)
+                                # Limpiamos columnas que no sirven para el reporte
+                                df_emp_clean = df_emp[['Fecha', 'Hora', 'Tipo', 'Dispositivo']]
+                                df_emp_clean.to_excel(writer, sheet_name='Detalle Fichajes', index=False)
+                                
+                            # Preparamos el archivo para descargar
+                            buffer.seek(0)
+                            
                             st.download_button(
-                                label=f"📥 Descargar Resumen de {empleado_selec}",
-                                data=csv_resumen,
-                                file_name=f"Resumen_Horas_{empleado_selec}.csv",
-                                mime="text/csv"
+                                label=f"📥 Descargar Excel de {empleado_selec}",
+                                data=buffer,
+                                file_name=f"Asistencia_{empleado_selec}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                             )
-                            
-                            # Opción de ver datos crudos
-                            with st.expander("Ver fichajes detallados (Raw Data)"):
-                                st.dataframe(df_emp[['Fecha', 'Hora', 'Tipo', 'Dispositivo']])
-    
+
                     else:
                         st.warning("La base de datos está vacía.")
                 except Exception as e:
-                    st.error(f"Error calculando datos: {e}")
+                    st.error(f"Error: {e}")
