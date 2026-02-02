@@ -9,6 +9,7 @@ import streamlit_javascript as st_js
 import io
 import uuid
 import hashlib
+from streamlit_calendar import calendar 
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Control Asistencia", page_icon="🛡️")
@@ -168,132 +169,209 @@ else:
     if password == ADMIN_PASSWORD:
 
         
-# --- SECCIÓN: CALENDARIO INTELIGENTE ---
-        if opcion == "Calendario y Festivos":
-            st.header("📅 Gestión Masiva de Fechas")
-            st.info("Bloquea vacaciones o festivos por rangos de fechas.")
-            
-            # --- FORMULARIO DE CREACIÓN (Sin cambios) ---
-            with st.form("nuevo_bloqueo_masivo"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    fecha_inicio = st.date_input("Fecha Inicio", format="DD/MM/YYYY")
-                with col2:
-                    fecha_fin = st.date_input("Fecha Fin", value=fecha_inicio, format="DD/MM/YYYY")
-                
-                if fecha_fin < fecha_inicio:
-                    st.error("La fecha de fin no puede ser anterior a la de inicio.")
-                
-                st.write("---")
-                
-                col3, col4 = st.columns(2)
-                with col3:
-                    tipo_bloqueo = st.selectbox("Tipo", ["INDIVIDUAL (Un empleado)", "GLOBAL (Toda la empresa)"])
-                    
-                    nombre_emp_cal = "TODOS"
-                    if "INDIVIDUAL" in tipo_bloqueo:
-                        try:
-                            sh_u = conectar_google_sheets("Usuarios")
-                            lista_nombres = [r['Nombre'] for r in sh_u.get_all_records()]
-                            nombre_emp_cal = st.selectbox("Empleado Afectado:", lista_nombres)
-                        except:
-                            st.error("Error cargando empleados")
-                
-                with col4:
-                    modo_seleccion = st.radio("¿Qué días bloquear?", 
-                                              ["Todos los días del rango", "Solo Fines de Semana (Sáb/Dom)"])
-                
-                motivo = st.text_input("Motivo (Ej: Vacaciones Verano, Cierre Empresa)")
-                
-                submit_cal = st.form_submit_button("💾 Guardar Fechas en Calendario")
-                
-                if submit_cal and motivo:
-                    try:
-                        sheet_cal = conectar_google_sheets("Calendario")
-                        
-                        filas_a_guardar = []
-                        tipo_str = "GLOBAL" if "GLOBAL" in tipo_bloqueo else "INDIVIDUAL"
-                        delta = fecha_fin - fecha_inicio
-                        
-                        for i in range(delta.days + 1):
-                            dia_actual = fecha_inicio + timedelta(days=i)
-                            es_finde = dia_actual.weekday() >= 5
-                            
-                            guardar = False
-                            if modo_seleccion == "Todos los días del rango": guardar = True
-                            elif modo_seleccion == "Solo Fines de Semana (Sáb/Dom)" and es_finde: guardar = True
-                            
-                            if guardar:
-                                fecha_str = dia_actual.strftime("%d/%m/%Y")
-                                filas_a_guardar.append([fecha_str, tipo_str, nombre_emp_cal, motivo])
-                        
-                        if filas_a_guardar:
-                            sheet_cal.append_rows(filas_a_guardar)
-                            st.success(f"✅ Se han añadido {len(filas_a_guardar)} días bloqueados al calendario.")
-                            time.sleep(1)
-                            st.rerun()
-                        else:
-                            st.warning("⚠️ No se seleccionó ningún día.")
-                            
-                    except Exception as e:
-                        st.error(f"Error guardando: {e}")
 
-            st.write("---")
+
+        # --- SECCIÓN: CALENDARIO INTELIGENTE ---
+        if opcion == "Calendario y Festivos":
+            st.header("📅 Calendario Laboral")
             
-            # --- ZONA DE EDICIÓN MEJORADA (ORDEN CORREGIDO) ---
-            with st.expander("📂 Ver y Modificar Fechas Bloqueadas (Clic para desplegar)"):
-                try:
-                    sheet_cal = conectar_google_sheets("Calendario")
-                    data_cal = sheet_cal.get_all_records()
+            # Creamos dos pestañas para separar la gestión de la visualización
+            tab_gestion, tab_visual = st.tabs(["✍️ Gestión y Edición", "👀 Vista Gráfica Interactiva"])
+            
+            # =================================================
+            # PESTAÑA 1: GESTIÓN (Lo que ya teníamos)
+            # =================================================
+            with tab_gestion:
+                st.info("Bloquea vacaciones o festivos por rangos de fechas.")
+                
+                with st.form("nuevo_bloqueo_masivo"):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        fecha_inicio = st.date_input("Fecha Inicio", format="DD/MM/YYYY")
+                    with col2:
+                        fecha_fin = st.date_input("Fecha Fin", value=fecha_inicio, format="DD/MM/YYYY")
                     
-                    if data_cal:
-                        df_cal = pd.DataFrame(data_cal)
+                    if fecha_fin < fecha_inicio:
+                        st.error("La fecha de fin no puede ser anterior a la de inicio.")
+                    
+                    st.write("---")
+                    
+                    col3, col4 = st.columns(2)
+                    with col3:
+                        tipo_bloqueo = st.selectbox("Tipo", ["INDIVIDUAL (Un empleado)", "GLOBAL (Toda la empresa)"])
                         
-                        # 1. ORDENAMOS VISUALMENTE (Ascendente: Enero -> Diciembre)
-                        df_cal['Fecha_Orden'] = pd.to_datetime(df_cal['Fecha'], format='%d/%m/%Y', errors='coerce')
-                        
-                        # CAMBIO AQUI: ascending=True
-                        df_cal = df_cal.sort_values(by='Fecha_Orden', ascending=True) 
-                        
-                        df_editor_view = df_cal.drop(columns=['Fecha_Orden'])
-                        
-                        st.info("🗑️ Para borrar: Selecciona la fila (clic a la izquierda) y pulsa 'Supr'. Luego dale a Guardar.")
-                        
-                        edited_df = st.data_editor(
-                            df_editor_view, 
-                            num_rows="dynamic", 
-                            use_container_width=True,
-                            key="editor_calendario",
-                            hide_index=True
-                        )
-                        
-                        if st.button("💾 Guardar Cambios y Reordenar"):
+                        nombre_emp_cal = "TODOS"
+                        if "INDIVIDUAL" in tipo_bloqueo:
                             try:
-                                df_final = edited_df.copy()
-                                df_final['Aux_Sort'] = pd.to_datetime(df_final['Fecha'], format='%d/%m/%Y', errors='coerce')
-                                df_final = df_final.dropna(subset=['Aux_Sort'])
+                                sh_u = conectar_google_sheets("Usuarios")
+                                lista_nombres = [r['Nombre'] for r in sh_u.get_all_records()]
+                                nombre_emp_cal = st.selectbox("Empleado Afectado:", lista_nombres)
+                            except:
+                                st.error("Error cargando empleados")
+                    
+                    with col4:
+                        modo_seleccion = st.radio("¿Qué días bloquear?", 
+                                                  ["Todos los días del rango", "Solo Fines de Semana (Sáb/Dom)"])
+                    
+                    motivo = st.text_input("Motivo (Ej: Vacaciones Verano, Cierre Empresa)")
+                    
+                    submit_cal = st.form_submit_button("💾 Guardar Fechas en Calendario")
+                    
+                    if submit_cal and motivo:
+                        try:
+                            sheet_cal = conectar_google_sheets("Calendario")
+                            filas_a_guardar = []
+                            tipo_str = "GLOBAL" if "GLOBAL" in tipo_bloqueo else "INDIVIDUAL"
+                            delta = fecha_fin - fecha_inicio
+                            
+                            for i in range(delta.days + 1):
+                                dia_actual = fecha_inicio + timedelta(days=i)
+                                es_finde = dia_actual.weekday() >= 5
+                                guardar = False
+                                if modo_seleccion == "Todos los días del rango": guardar = True
+                                elif modo_seleccion == "Solo Fines de Semana (Sáb/Dom)" and es_finde: guardar = True
                                 
-                                # CAMBIO AQUI TAMBIÉN: ascending=True
-                                df_final = df_final.sort_values(by='Aux_Sort', ascending=True)
-                                
-                                df_final = df_final.drop(columns=['Aux_Sort'])
-                                
-                                nuevos_datos = [df_final.columns.values.tolist()] + df_final.values.tolist()
-                                
-                                sheet_cal.clear()
-                                sheet_cal.update(nuevos_datos)
-                                
-                                st.success("✅ Calendario actualizado y reordenado (Cronológico).")
+                                if guardar:
+                                    fecha_str = dia_actual.strftime("%d/%m/%Y")
+                                    filas_a_guardar.append([fecha_str, tipo_str, nombre_emp_cal, motivo])
+                            
+                            if filas_a_guardar:
+                                sheet_cal.append_rows(filas_a_guardar)
+                                st.success(f"✅ Se han añadido {len(filas_a_guardar)} días bloqueados.")
                                 time.sleep(1)
                                 st.rerun()
-                                
-                            except Exception as e:
-                                st.error(f"Error al procesar los datos: {e}")
+                            else:
+                                st.warning("⚠️ No se seleccionó ningún día.")
+                        except Exception as e:
+                            st.error(f"Error guardando: {e}")
+
+                st.write("---")
+                
+                with st.expander("📂 Ver y Modificar Tabla de Datos"):
+                    try:
+                        sheet_cal = conectar_google_sheets("Calendario")
+                        data_cal = sheet_cal.get_all_records()
+                        if data_cal:
+                            df_cal = pd.DataFrame(data_cal)
+                            df_cal['Fecha_Orden'] = pd.to_datetime(df_cal['Fecha'], format='%d/%m/%Y', errors='coerce')
+                            df_cal = df_cal.sort_values(by='Fecha_Orden', ascending=True)
+                            df_editor_view = df_cal.drop(columns=['Fecha_Orden'])
                             
+                            st.info("🗑️ Para borrar: Selecciona la fila y pulsa 'Supr'.")
+                            edited_df = st.data_editor(df_editor_view, num_rows="dynamic", use_container_width=True, key="editor_calendario", hide_index=True)
+                            
+                            if st.button("💾 Guardar Cambios Tabla"):
+                                df_final = edited_df.copy()
+                                df_final['Aux_Sort'] = pd.to_datetime(df_final['Fecha'], format='%d/%m/%Y', errors='coerce')
+                                df_final = df_final.dropna(subset=['Aux_Sort']).sort_values(by='Aux_Sort', ascending=True).drop(columns=['Aux_Sort'])
+                                nuevos_datos = [df_final.columns.values.tolist()] + df_final.values.tolist()
+                                sheet_cal.clear()
+                                sheet_cal.update(nuevos_datos)
+                                st.success("✅ Calendario actualizado.")
+                                time.sleep(1)
+                                st.rerun()
+                        else:
+                            st.info("El calendario está vacío.")
+                    except Exception as e:
+                        st.warning(f"Error: {e}")
+
+            # =================================================
+            # PESTAÑA 2: VISTA GRÁFICA (NUEVO CÓDIGO)
+            # =================================================
+            with tab_visual:
+                st.subheader("Visualización Gráfica")
+                
+                try:
+                    sheet_cal = conectar_google_sheets("Calendario")
+                    raw_data = sheet_cal.get_all_records()
+                    
+                    if raw_data:
+                        df_graf = pd.DataFrame(raw_data)
+                        
+                        # 1. FILTRO DE EMPLEADOS
+                        # Obtenemos la lista única de empleados que tienen vacaciones asignadas
+                        lista_emps_con_vacaciones = df_graf[df_graf['Tipo'] == 'INDIVIDUAL']['Empleado'].unique().tolist()
+                        
+                        col_filter1, col_filter2 = st.columns([3, 1])
+                        with col_filter1:
+                            # Multiselect para elegir a quién ver
+                            seleccionados = st.multiselect(
+                                "Selecciona Empleados para ver sus vacaciones:",
+                                options=sorted(lista_emps_con_vacaciones),
+                                default=sorted(lista_emps_con_vacaciones) # Por defecto todos seleccionados
+                            )
+                        
+                        # 2. TRANSFORMACIÓN DE DATOS A FORMATO CALENDARIO
+                        calendar_events = []
+                        
+                        for _, row in df_graf.iterrows():
+                            # Filtramos: Si es GLOBAL siempre se muestra. 
+                            # Si es INDIVIDUAL, solo si está en la lista seleccionada.
+                            mostrar = False
+                            color = "#3788d8" # Azul por defecto
+                            
+                            if row['Tipo'] == 'GLOBAL':
+                                mostrar = True
+                                color = "#FF5733" # Rojo/Naranja para festivos generales
+                                titulo = f"🏢 {row['Motivo']}"
+                            elif row['Empleado'] in seleccionados:
+                                mostrar = True
+                                color = "#28B463" # Verde para vacaciones empleado
+                                titulo = f"✈️ {row['Empleado']}: {row['Motivo']}"
+                            
+                            if mostrar:
+                                # Convertimos DD/MM/YYYY a YYYY-MM-DD (que es lo que pide el calendario)
+                                try:
+                                    fecha_obj = datetime.strptime(row['Fecha'], "%d/%m/%Y")
+                                    fecha_iso = fecha_obj.strftime("%Y-%m-%d")
+                                    
+                                    event = {
+                                        "title": titulo,
+                                        "start": fecha_iso,
+                                        "end": fecha_iso,
+                                        "backgroundColor": color,
+                                        "borderColor": color,
+                                        "allDay": True
+                                    }
+                                    calendar_events.append(event)
+                                except:
+                                    pass # Si hay una fecha mal puesta, la ignoramos
+                        
+                        # 3. CONFIGURACIÓN DEL CALENDARIO
+                        calendar_options = {
+                            "editable": False, # No dejar mover eventos arrastrando (solo visualización)
+                            "headerToolbar": {
+                                "left": "today prev,next",
+                                "center": "title",
+                                "right": "dayGridMonth,listMonth"
+                            },
+                            "initialView": "dayGridMonth",
+                            "locale": "es", # Idioma español
+                            "buttonText": {
+                                "today": "Hoy",
+                                "month": "Mes",
+                                "list": "Lista"
+                            }
+                        }
+                        
+                        # 4. PINTAR CALENDARIO
+                        calendar(events=calendar_events, options=calendar_options, custom_css="""
+                            .fc-event-title {
+                                font-weight: bold !important;
+                                font-size: 0.9em !important;
+                            }
+                        """)
+                        
+                        # Leyenda de colores
+                        st.caption("🔴 Rojo: Festivos Empresa | 🟢 Verde: Vacaciones Empleado")
+                        
                     else:
-                        st.info("El calendario está vacío.")
+                        st.info("No hay datos en el calendario para mostrar.")
+                        
                 except Exception as e:
-                    st.warning(f"Error cargando calendario: {e}")
+                    st.error(f"Error cargando la vista gráfica: {e}")
+
+
 
         # --- SECCIÓN: USUARIOS (Igual) ---
         elif opcion == "Generar Usuarios":
@@ -365,3 +443,5 @@ else:
 
     elif password:
         st.error("Contraseña incorrecta")
+        st.error("Contraseña incorrecta")
+
