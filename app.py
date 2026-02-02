@@ -354,3 +354,26 @@ else:
                         elif r['Tipo'] == 'SALIDA' and ent:
                             tot_s += (r['DT'] - ent).total_seconds()
                             ent = None
+                
+                ht, mt = int(tot_s // 3600), int((tot_s % 3600) // 60)
+                st.metric("Horas Trabajadas (Selección)", f"{ht}h {mt}m")
+                
+                # Visualización Tabla
+                cols_vis = ['Fecha', 'Hora', 'Empleado', 'Tipo', 'Estado', 'Dispositivo']
+                st.dataframe(df_f.reindex(columns=cols_vis), use_container_width=True)
+                
+                # DESCARGA EXCEL (.XLSX)
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                    df_f.reindex(columns=cols_vis).to_excel(writer, sheet_name='Reporte', index=False)
+                    df_f.to_excel(writer, sheet_name='Datos_Completos', index=False)
+                
+                buffer.seek(0)
+                file_n = f"Reporte_{f_emp}_{f_mes.replace('/','-')}.xlsx"
+                st.download_button("📥 Descargar Excel (.xlsx)", buffer, file_n, 
+                                   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            else:
+                st.warning("Sin datos.")
+
+    elif pwd:
+        st.error("Contraseña incorrecta")
