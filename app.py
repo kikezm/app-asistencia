@@ -9,7 +9,7 @@ import streamlit_javascript as st_js
 import io
 import uuid
 import hashlib
-from streamlit_calendar import calendar # IMPORTACIÓN VITAL
+from streamlit_calendar import calendar 
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Control Asistencia", page_icon="🛡️")
@@ -46,8 +46,6 @@ def conectar_google_sheets(nombre_hoja_especifica):
         return None
 
 # --- FUNCIONES DE LECTURA CON CACHÉ INTELIGENTE ---
-# Usamos TTL para no saturar la API, pero permitimos borrar la caché cuando guardamos datos.
-
 @st.cache_data(ttl=600)
 def cargar_datos_usuarios():
     sheet = conectar_google_sheets("Usuarios")
@@ -94,7 +92,6 @@ def obtener_estado_actual(nombre):
     df_emp = df[df['Empleado'] == nombre]
     if df_emp.empty: return "FUERA"
     
-    # Ordenar por fecha real
     df_emp['DT'] = pd.to_datetime(df_emp['Fecha'] + ' ' + df_emp['Hora'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
     df_emp = df_emp.sort_values(by='DT')
     
@@ -120,7 +117,6 @@ def registrar_fichaje(nombre, tipo, disp):
         
         sheet.append_row([f, h, nombre, tipo, disp, firma])
         
-        # IMPORTANTE: Limpiar caché para ver el cambio inmediato
         st.cache_data.clear()
         
         st.success(f"✅ {tipo} registrada correctamente.")
@@ -191,7 +187,7 @@ else:
                     sheet = conectar_google_sheets("Usuarios")
                     uid = str(uuid.uuid4())
                     sheet.append_row([uid, n_nombre])
-                    st.cache_data.clear() # Limpiar caché para que aparezca en listas
+                    st.cache_data.clear()
                     st.success(f"Creado: {n_nombre}")
                     st.code(f"{APP_URL}/?token={uid}")
         
@@ -203,45 +199,54 @@ else:
             with t_gest:
                 st.info("Añadir días festivos o vacaciones.")
                 with st.form("add_cal"):
-                    c1, c2 = st.columns(2)
-                    d_ini = c1.date_input("Inicio", format="DD/MM/YYYY")
-                    d_fin = c2.date_input("Fin", value=d_ini, format="DD/MM/YYYY")
+                    # --- CAMBIO AQUÍ: SELECTOR DE RANGO ÚNICO ---
+                    rango_fechas = st.date_input("Selecciona Rango de Fechas (Inicio - Fin)", value=[], format="DD/MM/YYYY")
                     
                     st.write("---")
                     c3, c4 = st.columns(2)
-                    tipo = c3.selectbox("Tipo", ["INDIVIDUAL (Un empleado)", "GLOBAL (Empresa)"])
+                    with c3:
+                        tipo = st.selectbox("Tipo", ["INDIVIDUAL (Un empleado)", "GLOBAL (Empresa)"])
+                        nom_emp = "TODOS"
+                        if "INDIVIDUAL" in tipo:
+                            usrs = cargar_datos_usuarios()
+                            l_n = [u['Nombre'] for u in usrs] if usrs else []
+                            nom_emp = st.selectbox("Empleado:", l_n)
                     
-                    nom_emp = "TODOS"
-                    if "INDIVIDUAL" in tipo:
-                        usrs = cargar_datos_usuarios()
-                        l_n = [u['Nombre'] for u in usrs] if usrs else []
-                        nom_emp = c3.selectbox("Empleado:", l_n)
+                    with c4:
+                        modo = st.radio("Días:", ["Todos", "Solo Fines de Semana"])
                     
-                    modo = c4.radio("Días:", ["Todos", "Solo Fines de Semana"])
-                    motivo = st.text_input("Motivo")
+                    motivo = st.text_input("Motivo (Ej: Vacaciones Verano)")
                     
                     if st.form_submit_button("💾 Guardar"):
-                        sheet = conectar_google_sheets("Calendario")
-                        rows = []
-                        t_s = "GLOBAL" if "GLOBAL" in tipo else "INDIVIDUAL"
-                        delta = d_fin - d_ini
-                        for i in range(delta.days + 1):
-                            dia = d_ini + timedelta(days=i)
-                            if modo == "Solo Fines de Semana" and dia.weekday() < 5: continue
-                            rows.append([dia.strftime("%d/%m/%Y"), t_s, nom_emp, motivo])
-                        
-                        if rows:
-                            sheet.append_rows(rows)
-                            st.cache_data.clear() # VITAL: Limpiar caché
-                            st.success(f"Añadidos {len(rows)} días.")
-                            time.sleep(1)
-                            st.rerun()
+                        # Validación del rango
+                        if len(rango_fechas) == 0:
+                            st.error("Debes seleccionar al menos una fecha.")
+                        else:
+                            # Lógica para extraer inicio y fin del selector
+                            d_ini = rango_fechas[0]
+                            d_fin = rango_fechas[1] if len(rango_fechas) > 1 else d_ini
+                            
+                            sheet = conectar_google_sheets("Calendario")
+                            rows = []
+                            t_s = "GLOBAL" if "GLOBAL" in tipo else "INDIVIDUAL"
+                            delta = d_fin - d_ini
+                            
+                            for i in range(delta.days + 1):
+                                dia = d_ini + timedelta(days=i)
+                                if modo == "Solo Fines de Semana" and dia.weekday() < 5: continue
+                                rows.append([dia.strftime("%d/%m/%Y"), t_s, nom_emp, motivo])
+                            
+                            if rows:
+                                sheet.append_rows(rows)
+                                st.cache_data.clear()
+                                st.success(f"Añadidos {len(rows)} días correctamente.")
+                                time.sleep(1)
+                                st.rerun()
 
                 with st.expander("📂 Ver Tabla Completa"):
                     data = cargar_datos_calendario()
                     if data:
                         df = pd.DataFrame(data)
-                        # Ordenar para edición
                         df['Aux'] = pd.to_datetime(df['Fecha'], format='%d/%m/%Y', errors='coerce')
                         df = df.sort_values(by='Aux')
                         df_edit = df.drop(columns=['Aux'])
@@ -249,7 +254,6 @@ else:
                         ed = st.data_editor(df_edit, num_rows="dynamic", use_container_width=True, hide_index=True)
                         
                         if st.button("💾 Guardar Cambios Tabla"):
-                            # Reordenar antes de subir
                             df_final = ed.copy()
                             df_final['Aux'] = pd.to_datetime(df_final['Fecha'], format='%d/%m/%Y', errors='coerce')
                             df_final = df_final.dropna(subset=['Aux']).sort_values(by='Aux').drop(columns=['Aux'])
@@ -264,13 +268,9 @@ else:
                             st.rerun()
 
             with t_vis:
-                # LÓGICA DEL CALENDARIO (SIN CACHÉ VISUAL PARA EVITAR ERRORES)
                 raw_cal = cargar_datos_calendario()
-                
                 if raw_cal:
                     df_c = pd.DataFrame(raw_cal)
-                    
-                    # Filtros
                     if 'Empleado' not in df_c.columns: df_c['Empleado'] = ""
                     if 'Tipo' not in df_c.columns: df_c['Tipo'] = ""
                     
@@ -279,10 +279,7 @@ else:
                     
                     events = []
                     for _, r in df_c.iterrows():
-                        ver = False
-                        col = "#3788d8"
-                        tit = ""
-                        
+                        ver, col, tit = False, "#3788d8", ""
                         if r['Tipo'] == 'GLOBAL':
                             ver, col, tit = True, "#FF5733", f"🏢 {r.get('Motivo')}"
                         elif r['Tipo'] == 'INDIVIDUAL' and r['Empleado'] in sel_users:
@@ -291,26 +288,12 @@ else:
                         if ver:
                             try:
                                 d_iso = datetime.strptime(r['Fecha'], "%d/%m/%Y").strftime("%Y-%m-%d")
-                                events.append({
-                                    "title": tit, "start": d_iso, "end": d_iso, 
-                                    "backgroundColor": col, "allDay": True
-                                })
+                                events.append({"title": tit, "start": d_iso, "end": d_iso, "backgroundColor": col, "allDay": True})
                             except: pass
                     
-                    # RENDERIZADO DEL CALENDARIO
                     if events:
-                        calendar_options = {
-                            "editable": False,
-                            "height": 700,
-                            "headerToolbar": {
-                                "left": "today prev,next",
-                                "center": "title",
-                                "right": "dayGridMonth,listMonth"
-                            },
-                            "initialView": "dayGridMonth",
-                            "locale": "es"
-                        }
-                        calendar(events=events, options=calendar_options, key="cal_widget")
+                        # KEY única para evitar conflictos
+                        calendar(events=events, options={"initialView": "dayGridMonth", "height": 700, "locale": "es"}, key="cal_widget_fix")
                     else:
                         st.info("No hay eventos que mostrar.")
                 else:
@@ -323,14 +306,11 @@ else:
             
             if data:
                 df = pd.DataFrame(data)
-                
-                # Procesamiento
                 df['Estado'] = df.apply(verificar_integridad, axis=1)
                 df['DT'] = pd.to_datetime(df['Fecha'] + ' ' + df['Hora'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
                 df = df.sort_values(by='DT', ascending=False)
                 df['Mes'] = df['DT'].dt.strftime('%m/%Y')
                 
-                # Filtros
                 c1, c2 = st.columns(2)
                 meses = ["Todos"] + sorted(df['Mes'].dropna().unique().tolist(), reverse=True)
                 f_mes = c1.selectbox("Mes:", meses)
@@ -339,12 +319,10 @@ else:
                 emps = ["Todos"] + sorted(emps_source['Empleado'].unique().tolist())
                 f_emp = c2.selectbox("Empleado:", emps)
                 
-                # Filtrado final
                 df_f = df.copy()
                 if f_mes != "Todos": df_f = df_f[df_f['Mes'] == f_mes]
                 if f_emp != "Todos": df_f = df_f[df_f['Empleado'] == f_emp]
                 
-                # Cálculo Horas
                 tot_s = 0
                 for e in df_f['Empleado'].unique():
                     sub = df_f[df_f['Empleado'] == e].sort_values(by='DT')
@@ -358,11 +336,9 @@ else:
                 ht, mt = int(tot_s // 3600), int((tot_s % 3600) // 60)
                 st.metric("Horas Trabajadas (Selección)", f"{ht}h {mt}m")
                 
-                # Visualización Tabla
                 cols_vis = ['Fecha', 'Hora', 'Empleado', 'Tipo', 'Estado', 'Dispositivo']
                 st.dataframe(df_f.reindex(columns=cols_vis), use_container_width=True)
                 
-                # DESCARGA EXCEL (.XLSX)
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                     df_f.reindex(columns=cols_vis).to_excel(writer, sheet_name='Reporte', index=False)
@@ -370,8 +346,7 @@ else:
                 
                 buffer.seek(0)
                 file_n = f"Reporte_{f_emp}_{f_mes.replace('/','-')}.xlsx"
-                st.download_button("📥 Descargar Excel (.xlsx)", buffer, file_n, 
-                                   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                st.download_button("📥 Descargar Excel (.xlsx)", buffer, file_n, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             else:
                 st.warning("Sin datos.")
 
