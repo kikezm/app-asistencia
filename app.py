@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime, timedelta # <--- AÑADIDO timedelta PARA LOS RANGOS
+from datetime import datetime, timedelta
 import time
 import os
 import streamlit_javascript as st_js
@@ -175,9 +175,10 @@ else:
             with st.form("nuevo_bloqueo_masivo"):
                 col1, col2 = st.columns(2)
                 with col1:
-                    fecha_inicio = st.date_input("Fecha Inicio")
+                    # format="DD/MM/YYYY" fuerza el estilo europeo visualmente
+                    fecha_inicio = st.date_input("Fecha Inicio", format="DD/MM/YYYY")
                 with col2:
-                    fecha_fin = st.date_input("Fecha Fin", value=fecha_inicio)
+                    fecha_fin = st.date_input("Fecha Fin", value=fecha_inicio, format="DD/MM/YYYY")
                 
                 if fecha_fin < fecha_inicio:
                     st.error("La fecha de fin no puede ser anterior a la de inicio.")
@@ -186,7 +187,8 @@ else:
                 
                 col3, col4 = st.columns(2)
                 with col3:
-                    tipo_bloqueo = st.selectbox("Tipo", ["GLOBAL (Toda la empresa)", "INDIVIDUAL (Un empleado)"])
+                    # CAMBIO: INDIVIDUAL sale primero por defecto
+                    tipo_bloqueo = st.selectbox("Tipo", ["INDIVIDUAL (Un empleado)", "GLOBAL (Toda la empresa)"])
                     
                     nombre_emp_cal = "TODOS"
                     if "INDIVIDUAL" in tipo_bloqueo:
@@ -209,7 +211,6 @@ else:
                     try:
                         sheet_cal = conectar_google_sheets("Calendario")
                         
-                        # LOGICA DE GENERACIÓN DE FECHAS
                         filas_a_guardar = []
                         tipo_str = "GLOBAL" if "GLOBAL" in tipo_bloqueo else "INDIVIDUAL"
                         
@@ -218,8 +219,7 @@ else:
                         for i in range(delta.days + 1):
                             dia_actual = fecha_inicio + timedelta(days=i)
                             
-                            # Filtro de Fines de Semana
-                            # .weekday(): 0=Lunes ... 5=Sábado, 6=Domingo
+                            # Filtro de Fines de Semana (0=Lunes... 5=Sábado, 6=Domingo)
                             es_finde = dia_actual.weekday() >= 5
                             
                             guardar = False
@@ -232,7 +232,6 @@ else:
                                 fecha_str = dia_actual.strftime("%d/%m/%Y")
                                 filas_a_guardar.append([fecha_str, tipo_str, nombre_emp_cal, motivo])
                         
-                        # GUARDADO OPTIMIZADO (BULK)
                         if filas_a_guardar:
                             sheet_cal.append_rows(filas_a_guardar)
                             st.success(f"✅ Se han añadido {len(filas_a_guardar)} días bloqueados al calendario.")
@@ -243,20 +242,52 @@ else:
                         st.error(f"Error guardando: {e}")
 
             st.write("---")
-            st.write("### 🗓️ Días Bloqueados (Vista Previa)")
-            try:
-                sheet_cal = conectar_google_sheets("Calendario")
-                data_cal = sheet_cal.get_all_records()
-                if data_cal:
-                    df_cal = pd.DataFrame(data_cal)
-                    # Convertir a fecha para ordenar
-                    df_cal['Fecha_dt'] = pd.to_datetime(df_cal['Fecha'], format='%d/%m/%Y', errors='coerce')
-                    df_cal = df_cal.sort_values(by='Fecha_dt', ascending=False).drop(columns=['Fecha_dt'])
-                    st.dataframe(df_cal, use_container_width=True)
-                else:
-                    st.info("Calendario vacío.")
-            except:
-                st.warning("Error leyendo calendario.")
+            
+            # --- ZONA DE EDICIÓN / VISUALIZACIÓN ---
+            # Usamos un expander para que no cargue por defecto
+            with st.expander("📂 Ver y Modificar Fechas Bloqueadas (Clic para desplegar)"):
+                try:
+                    sheet_cal = conectar_google_sheets("Calendario")
+                    data_cal = sheet_cal.get_all_records()
+                    
+                    if data_cal:
+                        df_cal = pd.DataFrame(data_cal)
+                        
+                        # ORDENAR POR FECHA REAL (No texto)
+                        # Creamos columna temporal datetime
+                        df_cal['Fecha_dt'] = pd.to_datetime(df_cal['Fecha'], format='%d/%m/%Y', errors='coerce')
+                        # Ordenamos
+                        df_cal = df_cal.sort_values(by='Fecha_dt', ascending=False)
+                        # Eliminamos columna temporal para no mostrarla
+                        df_cal = df_cal.drop(columns=['Fecha_dt'])
+                        
+                        st.info("💡 Puedes borrar filas seleccionándolas y pulsando la tecla 'Supr' (Delete), o modificando las celdas directamente.")
+                        
+                        # EDITOR DE DATOS
+                        # num_rows="dynamic" permite añadir/borrar filas
+                        edited_df = st.data_editor(
+                            df_cal, 
+                            num_rows="dynamic", 
+                            use_container_width=True,
+                            key="editor_calendario"
+                        )
+                        
+                        # BOTÓN PARA GUARDAR LOS CAMBIOS DEL EDITOR
+                        if st.button("💾 Guardar Cambios Realizados en la Tabla"):
+                            # Convertimos el DF editado a lista para subirlo
+                            # Necesitamos subir también los encabezados
+                            nuevos_datos = [edited_df.columns.values.tolist()] + edited_df.values.tolist()
+                            
+                            sheet_cal.clear() # Borramos todo
+                            sheet_cal.update(nuevos_datos) # Subimos lo nuevo
+                            st.success("Calendario actualizado correctamente en la nube.")
+                            time.sleep(1)
+                            st.rerun()
+                            
+                    else:
+                        st.info("El calendario está vacío.")
+                except Exception as e:
+                    st.warning(f"Error cargando o guardando calendario: {e}")
 
         # --- SECCIÓN: USUARIOS (Igual) ---
         elif opcion == "Generar Usuarios":
@@ -328,6 +359,7 @@ else:
 
     elif password:
         st.error("Contraseña incorrecta")
+
 
 
 
