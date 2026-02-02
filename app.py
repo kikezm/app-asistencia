@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime
+from datetime import datetime, timedelta # <--- AÑADIDO timedelta PARA LOS RANGOS
 import time
 import os
 import streamlit_javascript as st_js
@@ -44,6 +44,9 @@ def conectar_google_sheets(nombre_hoja_especifica):
     except gspread.WorksheetNotFound:
         st.error(f"❌ No encuentro la pestaña '{nombre_hoja_especifica}'. Créala en Google Sheets.")
         st.stop()
+    except gspread.SpreadsheetNotFound:
+        st.error(f"❌ No encuentro la hoja de cálculo: '{SHEET_NAME}'.")
+        st.stop()
 
 # --- FUNCIONES DE LÓGICA ---
 def generar_firma(fecha, hora, nombre, tipo, dispositivo):
@@ -81,30 +84,18 @@ def obtener_estado_actual(nombre_empleado):
         return "DENTRO" if df_emp.iloc[-1]['Tipo'] == "ENTRADA" else "FUERA"
     except: return "DESCONOCIDO"
 
-# --- NUEVA FUNCIÓN: VERIFICAR CALENDARIO ---
 def puede_fichar_hoy(nombre_empleado):
     """Devuelve (True, "") si puede fichar o (False, "Motivo") si está bloqueado"""
     try:
         sheet_cal = conectar_google_sheets("Calendario")
         registros = sheet_cal.get_all_records()
-        
         hoy = datetime.now().strftime("%d/%m/%Y")
-        
         for row in registros:
-            # Si la fecha coincide con HOY
             if row['Fecha'] == hoy:
-                # CASO 1: Es un festivo GLOBAL
-                if row['Tipo'] == "GLOBAL":
-                    return False, f"Festivo: {row['Motivo']}"
-                
-                # CASO 2: Es vacaciones de ESTE EMPLEADO
-                if row['Tipo'] == "INDIVIDUAL" and row['Empleado'] == nombre_empleado:
-                    return False, f"Vacaciones asignadas: {row['Motivo']}"
-        
+                if row['Tipo'] == "GLOBAL": return False, f"Festivo: {row['Motivo']}"
+                if row['Tipo'] == "INDIVIDUAL" and row['Empleado'] == nombre_empleado: return False, f"Vacaciones: {row['Motivo']}"
         return True, "OK"
-    except Exception as e:
-        # Si falla la lectura (ej: pestaña vacía), permitimos fichar por seguridad
-        return True, "OK"
+    except: return True, "OK"
 
 def registrar_fichaje(nombre, tipo, info_dispositivo):
     try:
@@ -139,21 +130,14 @@ if token_acceso:
     
     if nombre_usuario:
         st.info(f"👋 Hola, **{nombre_usuario}**")
-        
-        # 1. VERIFICAMOS EL CALENDARIO PRIMERO
         puede_trabajar, motivo = puede_fichar_hoy(nombre_usuario)
         
         if not puede_trabajar:
-            # PANTALLA DE BLOQUEO POR VACACIONES/FESTIVO
             st.error(f"⛔ NO PUEDES FICHAR HOY")
             st.warning(f"Motivo: **{motivo}**")
-            st.caption("Si crees que es un error, contacta con administración.")
-        
         else:
-            # SI PUEDE TRABAJAR, MOSTRAMOS LOS BOTONES
             estado_actual = obtener_estado_actual(nombre_usuario)
             st.write("---")
-            
             if estado_actual == "FUERA":
                 st.markdown("### 🏠 Estás FUERA. ¿Quieres entrar?")
                 if st.button("🟢 REGISTRAR ENTRADA", use_container_width=True):
@@ -183,55 +167,98 @@ else:
     
     if password == ADMIN_PASSWORD:
         
-        # --- SECCIÓN: CALENDARIO ---
+        # --- SECCIÓN: CALENDARIO INTELIGENTE ---
         if opcion == "Calendario y Festivos":
-            st.header("📅 Gestión de Festivos y Vacaciones")
-            st.info("Añade días donde NO se permite fichar.")
+            st.header("📅 Gestión Masiva de Fechas")
+            st.info("Bloquea vacaciones o festivos por rangos de fechas.")
             
-            with st.form("nuevo_festivo"):
-                col_cal1, col_cal2 = st.columns(2)
-                with col_cal1:
-                    fecha_selec = st.date_input("Selecciona fecha")
-                    # Formateamos la fecha a String DD/MM/AAAA para guardarla
-                    fecha_str = fecha_selec.strftime("%d/%m/%Y")
-                with col_cal2:
-                    tipo_bloqueo = st.selectbox("Tipo de Bloqueo", ["GLOBAL (Toda la empresa)", "INDIVIDUAL (Un empleado)"])
+            with st.form("nuevo_bloqueo_masivo"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    fecha_inicio = st.date_input("Fecha Inicio")
+                with col2:
+                    fecha_fin = st.date_input("Fecha Fin", value=fecha_inicio)
                 
-                nombre_emp_cal = "TODOS"
-                if tipo_bloqueo == "INDIVIDUAL (Un empleado)":
-                    # Recuperamos lista de empleados para el desplegable
-                    try:
-                        sh_u = conectar_google_sheets("Usuarios")
-                        lista_nombres = [r['Nombre'] for r in sh_u.get_all_records()]
-                        nombre_emp_cal = st.selectbox("Empleado:", lista_nombres)
-                    except:
-                        st.error("No se pudo cargar la lista de empleados.")
+                if fecha_fin < fecha_inicio:
+                    st.error("La fecha de fin no puede ser anterior a la de inicio.")
                 
-                motivo = st.text_input("Motivo (Ej: Navidad, Vacaciones de Verano)")
+                st.write("---")
                 
-                submit_cal = st.form_submit_button("📅 Guardar Fecha Bloqueada")
+                col3, col4 = st.columns(2)
+                with col3:
+                    tipo_bloqueo = st.selectbox("Tipo", ["GLOBAL (Toda la empresa)", "INDIVIDUAL (Un empleado)"])
+                    
+                    nombre_emp_cal = "TODOS"
+                    if "INDIVIDUAL" in tipo_bloqueo:
+                        try:
+                            sh_u = conectar_google_sheets("Usuarios")
+                            lista_nombres = [r['Nombre'] for r in sh_u.get_all_records()]
+                            nombre_emp_cal = st.selectbox("Empleado Afectado:", lista_nombres)
+                        except:
+                            st.error("Error cargando empleados")
+                
+                with col4:
+                    modo_seleccion = st.radio("¿Qué días bloquear?", 
+                                              ["Todos los días del rango", "Solo Fines de Semana (Sáb/Dom)"])
+                
+                motivo = st.text_input("Motivo (Ej: Vacaciones Verano, Cierre Empresa)")
+                
+                submit_cal = st.form_submit_button("💾 Guardar Fechas en Calendario")
                 
                 if submit_cal and motivo:
                     try:
                         sheet_cal = conectar_google_sheets("Calendario")
-                        sheet_cal.append_row([fecha_str, "GLOBAL" if tipo_bloqueo.startswith("GLOBAL") else "INDIVIDUAL", nombre_emp_cal, motivo])
-                        st.success(f"Bloqueo guardado para el {fecha_str}")
+                        
+                        # LOGICA DE GENERACIÓN DE FECHAS
+                        filas_a_guardar = []
+                        tipo_str = "GLOBAL" if "GLOBAL" in tipo_bloqueo else "INDIVIDUAL"
+                        
+                        delta = fecha_fin - fecha_inicio
+                        
+                        for i in range(delta.days + 1):
+                            dia_actual = fecha_inicio + timedelta(days=i)
+                            
+                            # Filtro de Fines de Semana
+                            # .weekday(): 0=Lunes ... 5=Sábado, 6=Domingo
+                            es_finde = dia_actual.weekday() >= 5
+                            
+                            guardar = False
+                            if modo_seleccion == "Todos los días del rango":
+                                guardar = True
+                            elif modo_seleccion == "Solo Fines de Semana (Sáb/Dom)" and es_finde:
+                                guardar = True
+                            
+                            if guardar:
+                                fecha_str = dia_actual.strftime("%d/%m/%Y")
+                                filas_a_guardar.append([fecha_str, tipo_str, nombre_emp_cal, motivo])
+                        
+                        # GUARDADO OPTIMIZADO (BULK)
+                        if filas_a_guardar:
+                            sheet_cal.append_rows(filas_a_guardar)
+                            st.success(f"✅ Se han añadido {len(filas_a_guardar)} días bloqueados al calendario.")
+                        else:
+                            st.warning("⚠️ No se seleccionó ningún día con los filtros actuales.")
+                            
                     except Exception as e:
                         st.error(f"Error guardando: {e}")
 
             st.write("---")
-            st.write("### 🗓️ Días Bloqueados Actualmente")
+            st.write("### 🗓️ Días Bloqueados (Vista Previa)")
             try:
                 sheet_cal = conectar_google_sheets("Calendario")
-                df_cal = pd.DataFrame(sheet_cal.get_all_records())
-                if not df_cal.empty:
-                    st.dataframe(df_cal)
+                data_cal = sheet_cal.get_all_records()
+                if data_cal:
+                    df_cal = pd.DataFrame(data_cal)
+                    # Convertir a fecha para ordenar
+                    df_cal['Fecha_dt'] = pd.to_datetime(df_cal['Fecha'], format='%d/%m/%Y', errors='coerce')
+                    df_cal = df_cal.sort_values(by='Fecha_dt', ascending=False).drop(columns=['Fecha_dt'])
+                    st.dataframe(df_cal, use_container_width=True)
                 else:
-                    st.info("No hay fechas bloqueadas.")
+                    st.info("Calendario vacío.")
             except:
-                st.warning("No se pudo leer el calendario.")
+                st.warning("Error leyendo calendario.")
 
-        # --- SECCIÓN: GENERAR USUARIOS (Igual que antes) ---
+        # --- SECCIÓN: USUARIOS (Igual) ---
         elif opcion == "Generar Usuarios":
             st.header("👥 Gestión de Empleados")
             with st.form("nuevo_empleado"):
@@ -245,10 +272,9 @@ else:
                         link = f"{APP_URL}/?token={nuevo_id}"
                         st.success(f"Usuario {nuevo_nombre} creado.")
                         st.code(link, language="text")
-                    except Exception as e:
-                        st.error(f"Error: {e}")
+                    except Exception as e: st.error(f"Error: {e}")
 
-        # --- SECCIÓN: AUDITORÍA (Igual que antes) ---
+        # --- SECCIÓN: AUDITORÍA (Igual) ---
         elif opcion == "Auditoría e Informes":
             st.header("🕵️ Auditoría y Control")
             try:
@@ -273,7 +299,6 @@ else:
                     if filtro_mes != "Todos": df_final = df_final[df_final['Mes_Año'] == filtro_mes]
                     if filtro_emp != "Todos": df_final = df_final[df_final['Empleado'] == filtro_emp]
                     
-                    # Cálculo horas
                     tot_seg = 0
                     for emp in df_final['Empleado'].unique():
                         sub_df = df_final[df_final['Empleado'] == emp].sort_values(by='FechaHora')
@@ -287,13 +312,11 @@ else:
                     mt = int((tot_seg % 3600) // 60)
                     
                     st.metric("Horas Trabajadas (Selección)", f"{ht}h {mt}m")
-                    
                     ord_v = ['Fecha', 'Hora', 'Empleado', 'Tipo', 'Estado', 'Dispositivo']
                     for c in ord_v: 
                         if c not in df_final.columns: df_final[c]=""
                     st.dataframe(df_final.reindex(columns=ord_v), use_container_width=True)
                     
-                    # Descarga
                     buffer = io.BytesIO()
                     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                         df_final.reindex(columns=ord_v).to_excel(writer, sheet_name='Reporte', index=False)
@@ -305,5 +328,6 @@ else:
 
     elif password:
         st.error("Contraseña incorrecta")
+
 
 
