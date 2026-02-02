@@ -92,9 +92,13 @@ def obtener_estado_actual(nombre):
     df_emp = df[df['Empleado'] == nombre]
     if df_emp.empty: return "FUERA"
     
+    # Nos aseguramos de ignorar filas vacías o corruptas
+    df_emp = df_emp.dropna(subset=['Fecha', 'Hora'])
+    
     df_emp['DT'] = pd.to_datetime(df_emp['Fecha'] + ' ' + df_emp['Hora'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
     df_emp = df_emp.sort_values(by='DT')
     
+    if df_emp.empty: return "FUERA"
     return "DENTRO" if df_emp.iloc[-1]['Tipo'] == "ENTRADA" else "FUERA"
 
 def puede_fichar_hoy(nombre):
@@ -117,6 +121,7 @@ def registrar_fichaje(nombre, tipo, disp):
         
         sheet.append_row([f, h, nombre, tipo, disp, firma])
         
+        # Limpiamos caché
         st.cache_data.clear()
         
         st.success(f"✅ {tipo} registrada correctamente.")
@@ -199,7 +204,6 @@ else:
             with t_gest:
                 st.info("Añadir días festivos o vacaciones.")
                 with st.form("add_cal"):
-                    # Selector de Rango CORREGIDO
                     rango_fechas = st.date_input("Selecciona Rango (Inicio - Fin)", value=[], format="DD/MM/YYYY")
                     
                     st.write("---")
@@ -245,8 +249,14 @@ else:
                     data = cargar_datos_calendario()
                     if data:
                         df = pd.DataFrame(data)
+                        # Limpieza robusta de datos
+                        df = df.dropna(how='all') # Borrar filas totalmente vacías
+                        
+                        # Conversión segura de fecha
                         df['Aux'] = pd.to_datetime(df['Fecha'], format='%d/%m/%Y', errors='coerce')
+                        df = df.dropna(subset=['Aux']) # Borrar si la fecha no es válida
                         df = df.sort_values(by='Aux')
+                        
                         df_edit = df.drop(columns=['Aux'])
                         
                         ed = st.data_editor(df_edit, num_rows="dynamic", use_container_width=True, hide_index=True)
@@ -266,12 +276,19 @@ else:
                             st.rerun()
 
             with t_vis:
-                # RECUPERADO: Código completo del calendario interactivo
+                # Recuperamos datos frescos
                 raw_cal = cargar_datos_calendario()
+                
                 if raw_cal:
                     df_c = pd.DataFrame(raw_cal)
+                    
+                    # 1. LIMPIEZA AGRESIVA PARA EVITAR ERRORES
                     if 'Empleado' not in df_c.columns: df_c['Empleado'] = ""
                     if 'Tipo' not in df_c.columns: df_c['Tipo'] = ""
+                    if 'Fecha' not in df_c.columns: df_c['Fecha'] = ""
+                    
+                    # Eliminamos filas donde la fecha esté vacía
+                    df_c = df_c[df_c['Fecha'].astype(bool)]
                     
                     indivs = df_c[df_c['Tipo'] == 'INDIVIDUAL']['Empleado'].unique().tolist()
                     sel_users = st.multiselect("Filtrar Empleados:", sorted(indivs), default=sorted(indivs))
@@ -279,19 +296,31 @@ else:
                     events = []
                     for _, r in df_c.iterrows():
                         ver, col, tit = False, "#3788d8", ""
-                        if r['Tipo'] == 'GLOBAL':
-                            ver, col, tit = True, "#FF5733", f"🏢 {r.get('Motivo')}"
-                        elif r['Tipo'] == 'INDIVIDUAL' and r['Empleado'] in sel_users:
-                            ver, col, tit = True, "#28B463", f"✈️ {r['Empleado']}: {r.get('Motivo')}"
                         
-                        if ver:
+                        # Usamos .get() para evitar errores si falta un campo
+                        tipo_r = str(r.get('Tipo', '')).strip()
+                        emp_r = str(r.get('Empleado', '')).strip()
+                        fecha_r = str(r.get('Fecha', '')).strip()
+                        
+                        if tipo_r == 'GLOBAL':
+                            ver, col, tit = True, "#FF5733", f"🏢 {r.get('Motivo')}"
+                        elif tipo_r == 'INDIVIDUAL' and emp_r in sel_users:
+                            ver, col, tit = True, "#28B463", f"✈️ {emp_r}: {r.get('Motivo')}"
+                        
+                        if ver and fecha_r:
                             try:
-                                d_iso = datetime.strptime(r['Fecha'], "%d/%m/%Y").strftime("%Y-%m-%d")
-                                events.append({"title": tit, "start": d_iso, "end": d_iso, "backgroundColor": col, "allDay": True})
-                            except: pass
+                                d_iso = datetime.strptime(fecha_r, "%d/%m/%Y").strftime("%Y-%m-%d")
+                                events.append({
+                                    "title": tit, 
+                                    "start": d_iso, 
+                                    "end": d_iso, 
+                                    "backgroundColor": col, 
+                                    "allDay": True
+                                })
+                            except: 
+                                pass # Ignoramos fechas mal formadas
                     
                     if events:
-                        # RECUPERADO: Configuración completa con botones y estilo
                         calendar_options = {
                             "editable": False,
                             "height": 700,
@@ -303,12 +332,18 @@ else:
                             "initialView": "dayGridMonth",
                             "locale": "es",
                             "buttonText": {
-                                "today": "Hoy",
-                                "month": "Mes",
-                                "list": "Lista"
+                                "today": "Hoy", "month": "Mes", "list": "Lista"
                             }
                         }
-                        calendar(events=events, options=calendar_options, key="cal_widget_final_v2")
+                        
+                        # MAGIA AQUÍ: Usamos len(events) en la KEY. 
+                        # Si cambia el número de eventos (porque fichaste o borraste),
+                        # Streamlit destruye el calendario viejo y crea uno nuevo.
+                        clave_dinamica = f"cal_view_{len(events)}_{int(time.time())}"
+                        
+                        calendar(events=events, options=calendar_options, key=clave_dinamica)
+                        
+                        st.caption("🔴 Festivos Empresa | 🟢 Vacaciones Empleado")
                     else:
                         st.info("No hay eventos que mostrar.")
                 else:
@@ -321,6 +356,9 @@ else:
             
             if data:
                 df = pd.DataFrame(data)
+                # Limpieza de datos vacíos
+                df = df.dropna(subset=['Fecha', 'Hora'])
+                
                 df['Estado'] = df.apply(verificar_integridad, axis=1)
                 df['DT'] = pd.to_datetime(df['Fecha'] + ' ' + df['Hora'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
                 df = df.sort_values(by='DT', ascending=False)
