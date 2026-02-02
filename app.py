@@ -92,9 +92,7 @@ def obtener_estado_actual(nombre):
     df_emp = df[df['Empleado'] == nombre]
     if df_emp.empty: return "FUERA"
     
-    # Nos aseguramos de ignorar filas vacías o corruptas
     df_emp = df_emp.dropna(subset=['Fecha', 'Hora'])
-    
     df_emp['DT'] = pd.to_datetime(df_emp['Fecha'] + ' ' + df_emp['Hora'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
     df_emp = df_emp.sort_values(by='DT')
     
@@ -121,7 +119,6 @@ def registrar_fichaje(nombre, tipo, disp):
         
         sheet.append_row([f, h, nombre, tipo, disp, firma])
         
-        # Limpiamos caché
         st.cache_data.clear()
         
         st.success(f"✅ {tipo} registrada correctamente.")
@@ -129,6 +126,19 @@ def registrar_fichaje(nombre, tipo, disp):
         st.rerun()
     except Exception as e:
         st.error(f"Error al guardar: {e}")
+
+# --- HELPER: ASIGNACIÓN DE COLORES POR NOMBRE ---
+def obtener_color_por_nombre(nombre):
+    # Paleta de colores agradables (excluyendo el rojo de festivos)
+    colores = [
+        "#3366CC", "#FF9900", "#109618", "#990099", "#0099C6", 
+        "#DD4477", "#66AA00", "#B82E2E", "#316395", "#884EA0",
+        "#16A085", "#F39C12", "#2E86C1", "#D35400", "#7D3C98"
+    ]
+    # Usamos hash del nombre para asignar siempre el mismo color al mismo nombre
+    # abs() para evitar negativos, % len() para rotar si hay muchos empleados
+    indice = abs(hash(nombre)) % len(colores)
+    return colores[indice]
 
 # --- INTERFAZ ---
 try:
@@ -249,12 +259,9 @@ else:
                     data = cargar_datos_calendario()
                     if data:
                         df = pd.DataFrame(data)
-                        # Limpieza robusta de datos
-                        df = df.dropna(how='all') # Borrar filas totalmente vacías
-                        
-                        # Conversión segura de fecha
+                        df = df.dropna(how='all')
                         df['Aux'] = pd.to_datetime(df['Fecha'], format='%d/%m/%Y', errors='coerce')
-                        df = df.dropna(subset=['Aux']) # Borrar si la fecha no es válida
+                        df = df.dropna(subset=['Aux'])
                         df = df.sort_values(by='Aux')
                         
                         df_edit = df.drop(columns=['Aux'])
@@ -276,18 +283,15 @@ else:
                             st.rerun()
 
             with t_vis:
-                # Recuperamos datos frescos
                 raw_cal = cargar_datos_calendario()
                 
                 if raw_cal:
                     df_c = pd.DataFrame(raw_cal)
                     
-                    # 1. LIMPIEZA AGRESIVA PARA EVITAR ERRORES
                     if 'Empleado' not in df_c.columns: df_c['Empleado'] = ""
                     if 'Tipo' not in df_c.columns: df_c['Tipo'] = ""
                     if 'Fecha' not in df_c.columns: df_c['Fecha'] = ""
                     
-                    # Eliminamos filas donde la fecha esté vacía
                     df_c = df_c[df_c['Fecha'].astype(bool)]
                     
                     indivs = df_c[df_c['Tipo'] == 'INDIVIDUAL']['Empleado'].unique().tolist()
@@ -297,15 +301,19 @@ else:
                     for _, r in df_c.iterrows():
                         ver, col, tit = False, "#3788d8", ""
                         
-                        # Usamos .get() para evitar errores si falta un campo
                         tipo_r = str(r.get('Tipo', '')).strip()
                         emp_r = str(r.get('Empleado', '')).strip()
                         fecha_r = str(r.get('Fecha', '')).strip()
                         
                         if tipo_r == 'GLOBAL':
-                            ver, col, tit = True, "#FF5733", f"🏢 {r.get('Motivo')}"
+                            ver = True
+                            col = "#D32F2F" # Rojo Oscuro para Festivos
+                            tit = f"🏢 {r.get('Motivo')}"
                         elif tipo_r == 'INDIVIDUAL' and emp_r in sel_users:
-                            ver, col, tit = True, "#28B463", f"✈️ {emp_r}: {r.get('Motivo')}"
+                            ver = True
+                            # COLOR DINÁMICO POR EMPLEADO
+                            col = obtener_color_por_nombre(emp_r)
+                            tit = f"✈️ {emp_r}: {r.get('Motivo')}"
                         
                         if ver and fecha_r:
                             try:
@@ -315,10 +323,10 @@ else:
                                     "start": d_iso, 
                                     "end": d_iso, 
                                     "backgroundColor": col, 
+                                    "borderColor": col,
                                     "allDay": True
                                 })
-                            except: 
-                                pass # Ignoramos fechas mal formadas
+                            except: pass
                     
                     if events:
                         calendar_options = {
@@ -336,14 +344,14 @@ else:
                             }
                         }
                         
-                        # MAGIA AQUÍ: Usamos len(events) en la KEY. 
-                        # Si cambia el número de eventos (porque fichaste o borraste),
-                        # Streamlit destruye el calendario viejo y crea uno nuevo.
-                        clave_dinamica = f"cal_view_{len(events)}_{int(time.time())}"
+                        # CORRECCIÓN DE PARPADEO: 
+                        # Usamos el número de eventos y la selección de usuarios como clave.
+                        # SOLO cambia si cambian los datos, no con el tiempo.
+                        clave_estable = f"cal_{len(events)}_{len(sel_users)}"
                         
-                        calendar(events=events, options=calendar_options, key=clave_dinamica)
+                        calendar(events=events, options=calendar_options, key=clave_estable)
                         
-                        st.caption("🔴 Festivos Empresa | 🟢 Vacaciones Empleado")
+                        st.caption("🔴 Festivos Empresa | 🎨 Colores: Vacaciones individuales por empleado")
                     else:
                         st.info("No hay eventos que mostrar.")
                 else:
@@ -356,7 +364,6 @@ else:
             
             if data:
                 df = pd.DataFrame(data)
-                # Limpieza de datos vacíos
                 df = df.dropna(subset=['Fecha', 'Hora'])
                 
                 df['Estado'] = df.apply(verificar_integridad, axis=1)
