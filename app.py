@@ -166,16 +166,17 @@ else:
     password = st.sidebar.text_input("Contraseña Admin", type="password")
     
     if password == ADMIN_PASSWORD:
+
         
         # --- SECCIÓN: CALENDARIO INTELIGENTE ---
         if opcion == "Calendario y Festivos":
             st.header("📅 Gestión Masiva de Fechas")
             st.info("Bloquea vacaciones o festivos por rangos de fechas.")
             
+            # --- FORMULARIO DE CREACIÓN (Sin cambios) ---
             with st.form("nuevo_bloqueo_masivo"):
                 col1, col2 = st.columns(2)
                 with col1:
-                    # format="DD/MM/YYYY" fuerza el estilo europeo visualmente
                     fecha_inicio = st.date_input("Fecha Inicio", format="DD/MM/YYYY")
                 with col2:
                     fecha_fin = st.date_input("Fecha Fin", value=fecha_inicio, format="DD/MM/YYYY")
@@ -187,7 +188,6 @@ else:
                 
                 col3, col4 = st.columns(2)
                 with col3:
-                    # CAMBIO: INDIVIDUAL sale primero por defecto
                     tipo_bloqueo = st.selectbox("Tipo", ["INDIVIDUAL (Un empleado)", "GLOBAL (Toda la empresa)"])
                     
                     nombre_emp_cal = "TODOS"
@@ -213,20 +213,15 @@ else:
                         
                         filas_a_guardar = []
                         tipo_str = "GLOBAL" if "GLOBAL" in tipo_bloqueo else "INDIVIDUAL"
-                        
                         delta = fecha_fin - fecha_inicio
                         
                         for i in range(delta.days + 1):
                             dia_actual = fecha_inicio + timedelta(days=i)
-                            
-                            # Filtro de Fines de Semana (0=Lunes... 5=Sábado, 6=Domingo)
                             es_finde = dia_actual.weekday() >= 5
                             
                             guardar = False
-                            if modo_seleccion == "Todos los días del rango":
-                                guardar = True
-                            elif modo_seleccion == "Solo Fines de Semana (Sáb/Dom)" and es_finde:
-                                guardar = True
+                            if modo_seleccion == "Todos los días del rango": guardar = True
+                            elif modo_seleccion == "Solo Fines de Semana (Sáb/Dom)" and es_finde: guardar = True
                             
                             if guardar:
                                 fecha_str = dia_actual.strftime("%d/%m/%Y")
@@ -235,16 +230,17 @@ else:
                         if filas_a_guardar:
                             sheet_cal.append_rows(filas_a_guardar)
                             st.success(f"✅ Se han añadido {len(filas_a_guardar)} días bloqueados al calendario.")
+                            time.sleep(1)
+                            st.rerun() # Recargamos para que se vea abajo al instante
                         else:
-                            st.warning("⚠️ No se seleccionó ningún día con los filtros actuales.")
+                            st.warning("⚠️ No se seleccionó ningún día.")
                             
                     except Exception as e:
                         st.error(f"Error guardando: {e}")
 
             st.write("---")
             
-            # --- ZONA DE EDICIÓN / VISUALIZACIÓN ---
-            # Usamos un expander para que no cargue por defecto
+            # --- ZONA DE EDICIÓN MEJORADA ---
             with st.expander("📂 Ver y Modificar Fechas Bloqueadas (Clic para desplegar)"):
                 try:
                     sheet_cal = conectar_google_sheets("Calendario")
@@ -253,41 +249,62 @@ else:
                     if data_cal:
                         df_cal = pd.DataFrame(data_cal)
                         
-                        # ORDENAR POR FECHA REAL (No texto)
-                        # Creamos columna temporal datetime
-                        df_cal['Fecha_dt'] = pd.to_datetime(df_cal['Fecha'], format='%d/%m/%Y', errors='coerce')
-                        # Ordenamos
-                        df_cal = df_cal.sort_values(by='Fecha_dt', ascending=False)
-                        # Eliminamos columna temporal para no mostrarla
-                        df_cal = df_cal.drop(columns=['Fecha_dt'])
+                        # 1. ORDENAMOS VISUALMENTE ANTES DE MOSTRAR
+                        # Convertimos a fecha real para ordenar correctamente (no alfabéticamente)
+                        df_cal['Fecha_Orden'] = pd.to_datetime(df_cal['Fecha'], format='%d/%m/%Y', errors='coerce')
+                        df_cal = df_cal.sort_values(by='Fecha_Orden', ascending=False) # Las fechas futuras arriba
                         
-                        st.info("💡 Puedes borrar filas seleccionándolas y pulsando la tecla 'Supr' (Delete), o modificando las celdas directamente.")
+                        # Guardamos el índice original implícitamente al manipular el DF
+                        # Eliminamos la columna auxiliar visual para que no moleste en el editor
+                        df_editor_view = df_cal.drop(columns=['Fecha_Orden'])
                         
-                        # EDITOR DE DATOS
-                        # num_rows="dynamic" permite añadir/borrar filas
+                        st.info("🗑️ Para borrar: Selecciona la fila (clic a la izquierda) y pulsa 'Supr'. Luego dale a Guardar.")
+                        
+                        # EDITOR
                         edited_df = st.data_editor(
-                            df_cal, 
+                            df_editor_view, 
                             num_rows="dynamic", 
                             use_container_width=True,
-                            key="editor_calendario"
+                            key="editor_calendario",
+                            hide_index=True # Ocultamos el índice numérico feo (0, 1, 2...)
                         )
                         
-                        # BOTÓN PARA GUARDAR LOS CAMBIOS DEL EDITOR
-                        if st.button("💾 Guardar Cambios Realizados en la Tabla"):
-                            # Convertimos el DF editado a lista para subirlo
-                            # Necesitamos subir también los encabezados
-                            nuevos_datos = [edited_df.columns.values.tolist()] + edited_df.values.tolist()
-                            
-                            sheet_cal.clear() # Borramos todo
-                            sheet_cal.update(nuevos_datos) # Subimos lo nuevo
-                            st.success("Calendario actualizado correctamente en la nube.")
-                            time.sleep(1)
-                            st.rerun()
+                        # BOTÓN DE GUARDADO INTELIGENTE
+                        if st.button("💾 Guardar Cambios y Reordenar"):
+                            try:
+                                # AQUI ESTÁ LA MAGIA:
+                                # 1. Cogemos lo que el usuario ha modificado (puede estar desordenado)
+                                df_final = edited_df.copy()
+                                
+                                # 2. Convertimos la fecha a real OTRA VEZ para asegurar el orden en el archivo
+                                df_final['Aux_Sort'] = pd.to_datetime(df_final['Fecha'], format='%d/%m/%Y', errors='coerce')
+                                
+                                # 3. Borramos filas donde la fecha sea inválida (por si el usuario borró la fecha por error)
+                                df_final = df_final.dropna(subset=['Aux_Sort'])
+                                
+                                # 4. ORDENAMOS LA TABLA FINAL (Cronológico descendente)
+                                df_final = df_final.sort_values(by='Aux_Sort', ascending=False)
+                                
+                                # 5. Quitamos la columna auxiliar
+                                df_final = df_final.drop(columns=['Aux_Sort'])
+                                
+                                # 6. Preparamos para subir a Google Sheets
+                                nuevos_datos = [df_final.columns.values.tolist()] + df_final.values.tolist()
+                                
+                                sheet_cal.clear()
+                                sheet_cal.update(nuevos_datos)
+                                
+                                st.success("✅ Calendario actualizado y reordenado correctamente.")
+                                time.sleep(1)
+                                st.rerun()
+                                
+                            except Exception as e:
+                                st.error(f"Error al procesar los datos: {e}")
                             
                     else:
                         st.info("El calendario está vacío.")
                 except Exception as e:
-                    st.warning(f"Error cargando o guardando calendario: {e}")
+                    st.warning(f"Error cargando calendario: {e}")
 
         # --- SECCIÓN: USUARIOS (Igual) ---
         elif opcion == "Generar Usuarios":
@@ -359,6 +376,7 @@ else:
 
     elif password:
         st.error("Contraseña incorrecta")
+
 
 
 
