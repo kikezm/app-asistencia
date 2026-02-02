@@ -199,8 +199,8 @@ else:
             with t_gest:
                 st.info("Añadir días festivos o vacaciones.")
                 with st.form("add_cal"):
-                    # --- CAMBIO AQUÍ: SELECTOR DE RANGO ÚNICO ---
-                    rango_fechas = st.date_input("Selecciona Rango de Fechas (Inicio - Fin)", value=[], format="DD/MM/YYYY")
+                    # Selector de Rango CORREGIDO
+                    rango_fechas = st.date_input("Selecciona Rango (Inicio - Fin)", value=[], format="DD/MM/YYYY")
                     
                     st.write("---")
                     c3, c4 = st.columns(2)
@@ -218,11 +218,9 @@ else:
                     motivo = st.text_input("Motivo (Ej: Vacaciones Verano)")
                     
                     if st.form_submit_button("💾 Guardar"):
-                        # Validación del rango
                         if len(rango_fechas) == 0:
                             st.error("Debes seleccionar al menos una fecha.")
                         else:
-                            # Lógica para extraer inicio y fin del selector
                             d_ini = rango_fechas[0]
                             d_fin = rango_fechas[1] if len(rango_fechas) > 1 else d_ini
                             
@@ -268,6 +266,7 @@ else:
                             st.rerun()
 
             with t_vis:
+                # RECUPERADO: Código completo del calendario interactivo
                 raw_cal = cargar_datos_calendario()
                 if raw_cal:
                     df_c = pd.DataFrame(raw_cal)
@@ -292,8 +291,24 @@ else:
                             except: pass
                     
                     if events:
-                        # KEY única para evitar conflictos
-                        calendar(events=events, options={"initialView": "dayGridMonth", "height": 700, "locale": "es"}, key="cal_widget_fix")
+                        # RECUPERADO: Configuración completa con botones y estilo
+                        calendar_options = {
+                            "editable": False,
+                            "height": 700,
+                            "headerToolbar": {
+                                "left": "today prev,next",
+                                "center": "title",
+                                "right": "dayGridMonth,listMonth"
+                            },
+                            "initialView": "dayGridMonth",
+                            "locale": "es",
+                            "buttonText": {
+                                "today": "Hoy",
+                                "month": "Mes",
+                                "list": "Lista"
+                            }
+                        }
+                        calendar(events=events, options=calendar_options, key="cal_widget_final_v2")
                     else:
                         st.info("No hay eventos que mostrar.")
                 else:
