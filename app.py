@@ -168,7 +168,7 @@ else:
     if password == ADMIN_PASSWORD:
 
         
-        # --- SECCIÓN: CALENDARIO INTELIGENTE ---
+# --- SECCIÓN: CALENDARIO INTELIGENTE ---
         if opcion == "Calendario y Festivos":
             st.header("📅 Gestión Masiva de Fechas")
             st.info("Bloquea vacaciones o festivos por rangos de fechas.")
@@ -231,7 +231,7 @@ else:
                             sheet_cal.append_rows(filas_a_guardar)
                             st.success(f"✅ Se han añadido {len(filas_a_guardar)} días bloqueados al calendario.")
                             time.sleep(1)
-                            st.rerun() # Recargamos para que se vea abajo al instante
+                            st.rerun()
                         else:
                             st.warning("⚠️ No se seleccionó ningún día.")
                             
@@ -240,7 +240,7 @@ else:
 
             st.write("---")
             
-            # --- ZONA DE EDICIÓN MEJORADA ---
+            # --- ZONA DE EDICIÓN MEJORADA (ORDEN CORREGIDO) ---
             with st.expander("📂 Ver y Modificar Fechas Bloqueadas (Clic para desplegar)"):
                 try:
                     sheet_cal = conectar_google_sheets("Calendario")
@@ -249,52 +249,41 @@ else:
                     if data_cal:
                         df_cal = pd.DataFrame(data_cal)
                         
-                        # 1. ORDENAMOS VISUALMENTE ANTES DE MOSTRAR
-                        # Convertimos a fecha real para ordenar correctamente (no alfabéticamente)
+                        # 1. ORDENAMOS VISUALMENTE (Ascendente: Enero -> Diciembre)
                         df_cal['Fecha_Orden'] = pd.to_datetime(df_cal['Fecha'], format='%d/%m/%Y', errors='coerce')
-                        df_cal = df_cal.sort_values(by='Fecha_Orden', ascending=False) # Las fechas futuras arriba
                         
-                        # Guardamos el índice original implícitamente al manipular el DF
-                        # Eliminamos la columna auxiliar visual para que no moleste en el editor
+                        # CAMBIO AQUI: ascending=True
+                        df_cal = df_cal.sort_values(by='Fecha_Orden', ascending=True) 
+                        
                         df_editor_view = df_cal.drop(columns=['Fecha_Orden'])
                         
                         st.info("🗑️ Para borrar: Selecciona la fila (clic a la izquierda) y pulsa 'Supr'. Luego dale a Guardar.")
                         
-                        # EDITOR
                         edited_df = st.data_editor(
                             df_editor_view, 
                             num_rows="dynamic", 
                             use_container_width=True,
                             key="editor_calendario",
-                            hide_index=True # Ocultamos el índice numérico feo (0, 1, 2...)
+                            hide_index=True
                         )
                         
-                        # BOTÓN DE GUARDADO INTELIGENTE
                         if st.button("💾 Guardar Cambios y Reordenar"):
                             try:
-                                # AQUI ESTÁ LA MAGIA:
-                                # 1. Cogemos lo que el usuario ha modificado (puede estar desordenado)
                                 df_final = edited_df.copy()
-                                
-                                # 2. Convertimos la fecha a real OTRA VEZ para asegurar el orden en el archivo
                                 df_final['Aux_Sort'] = pd.to_datetime(df_final['Fecha'], format='%d/%m/%Y', errors='coerce')
-                                
-                                # 3. Borramos filas donde la fecha sea inválida (por si el usuario borró la fecha por error)
                                 df_final = df_final.dropna(subset=['Aux_Sort'])
                                 
-                                # 4. ORDENAMOS LA TABLA FINAL (Cronológico descendente)
-                                df_final = df_final.sort_values(by='Aux_Sort', ascending=False)
+                                # CAMBIO AQUI TAMBIÉN: ascending=True
+                                df_final = df_final.sort_values(by='Aux_Sort', ascending=True)
                                 
-                                # 5. Quitamos la columna auxiliar
                                 df_final = df_final.drop(columns=['Aux_Sort'])
                                 
-                                # 6. Preparamos para subir a Google Sheets
                                 nuevos_datos = [df_final.columns.values.tolist()] + df_final.values.tolist()
                                 
                                 sheet_cal.clear()
                                 sheet_cal.update(nuevos_datos)
                                 
-                                st.success("✅ Calendario actualizado y reordenado correctamente.")
+                                st.success("✅ Calendario actualizado y reordenado (Cronológico).")
                                 time.sleep(1)
                                 st.rerun()
                                 
@@ -376,8 +365,3 @@ else:
 
     elif password:
         st.error("Contraseña incorrecta")
-
-
-
-
-
