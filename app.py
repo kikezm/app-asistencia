@@ -10,6 +10,15 @@ import io
 import uuid
 import hashlib
 from streamlit_calendar import calendar 
+import pytz # <--- NUEVA IMPORTACIÓN
+
+# --- CONFIGURACIÓN DE ZONA HORARIA ---
+# Cambia 'Europe/Madrid' por tu zona si es otra (ej: 'America/Mexico_City')
+ZONA_HORARIA = pytz.timezone('Europe/Madrid')
+
+def obtener_ahora():
+    """Devuelve la fecha y hora actual exacta en tu zona horaria"""
+    return datetime.now(ZONA_HORARIA)
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Control Asistencia", page_icon="🛡️")
@@ -108,7 +117,8 @@ def obtener_estado_actual(nombre):
 
 def puede_fichar_hoy(nombre):
     data = cargar_datos_calendario()
-    hoy = datetime.now().strftime("%d/%m/%Y")
+    # CAMBIO AQUÍ: Usamos la zona horaria para saber qué día es hoy
+    hoy = obtener_ahora().strftime("%d/%m/%Y")
     for r in data:
         if r.get('Fecha') == hoy:
             if r.get('Tipo') == "GLOBAL": return False, f"Festivo: {r.get('Motivo')}"
@@ -120,15 +130,15 @@ def registrar_fichaje(nombre, tipo, disp):
         sheet = conectar_google_sheets("Hoja 1")
         if not sheet: st.error("Error conectando a Hoja 1"); return
 
-        ahora = datetime.now()
+        # CAMBIO AQUÍ: Usamos la zona horaria configurada
+        ahora = obtener_ahora()
         f, h = ahora.strftime("%d/%m/%Y"), ahora.strftime("%H:%M:%S")
-        firma = generar_firma(f, h, nombre, tipo, disp)
         
+        firma = generar_firma(f, h, nombre, tipo, disp)
         sheet.append_row([f, h, nombre, tipo, disp, firma])
         
         st.cache_data.clear()
-        
-        st.success(f"✅ {tipo} registrada correctamente.")
+        st.success(f"✅ {tipo} registrada correctamente a las {h}.")
         time.sleep(2)
         st.rerun()
     except Exception as e:
