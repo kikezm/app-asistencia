@@ -191,57 +191,70 @@ if token_acceso:
                         registrar_fichaje(nombre, "SALIDA", ua_string)
 
         with tab_mis_vacaciones:
-            st.subheader("Tus días registrados")
+            st.subheader("📅 Tus días registrados")
+            
+            # Forzamos una pequeña pausa/escritura invisible para dar tiempo a la pestaña a abrirse
+            st.write("") 
+            
             raw_cal = cargar_datos_calendario()
             
             if raw_cal:
                 df_c = pd.DataFrame(raw_cal)
-                # Filtramos: Solo días GLOBALES o días de este EMPLEADO específico
+                
+                # Filtro: Días GLOBALES o días de ESTE empleado
                 df_user = df_c[
                     (df_c['Tipo'] == 'GLOBAL') | 
                     ((df_c['Tipo'] == 'INDIVIDUAL') & (df_c['Empleado'] == nombre))
                 ]
                 
-                if not df_user.empty:
-                    events = []
-                    for _, r in df_user.iterrows():
-                        tipo_r = str(r.get('Tipo', ''))
-                        fecha_r = str(r.get('Fecha', ''))
-                        
-                        if tipo_r == 'GLOBAL':
-                            col = "#D32F2F"  # Rojo para festivos empresa
-                            tit = f"🏢 {r.get('Motivo')}"
-                        else:
-                            col = "#109618"  # Verde para sus vacaciones
-                            tit = f"✈️ Mis Vacaciones: {r.get('Motivo')}"
-                        
-                        try:
-                            d_iso = datetime.strptime(fecha_r, "%d/%m/%Y").strftime("%Y-%m-%d")
-                            events.append({
-                                "title": tit, 
-                                "start": d_iso, 
-                                "end": d_iso, 
-                                "backgroundColor": col, 
-                                "borderColor": col,
-                                "allDay": True
-                            })
-                        except: pass
+                events = []
+                for _, r in df_user.iterrows():
+                    tipo_r = str(r.get('Tipo', ''))
+                    fecha_r = str(r.get('Fecha', ''))
+                    motivo_r = str(r.get('Motivo', ''))
                     
-                    # Opciones del calendario (Igual que en Admin pero simplificado)
+                    if tipo_r == 'GLOBAL':
+                        col = "#D32F2F" # Rojo
+                        tit = f"🏢 {motivo_r}"
+                    else:
+                        col = "#109618" # Verde
+                        tit = f"✈️ {motivo_r}"
+                    
+                    try:
+                        d_iso = datetime.strptime(fecha_r, "%d/%m/%Y").strftime("%Y-%m-%d")
+                        events.append({
+                            "title": tit, 
+                            "start": d_iso, 
+                            "end": d_iso, 
+                            "backgroundColor": col, 
+                            "borderColor": col,
+                            "allDay": True
+                        })
+                    except: pass
+                
+                if events:
+                    # Opciones robustas
                     cal_opts_user = {
                         "initialView": "dayGridMonth",
-                        "height": 500,
+                        "initialDate": datetime.now().strftime("%Y-%m-%d"), # <--- FORZAMOS FECHA DE HOY
+                        "height": 600, # Altura fija importante
                         "locale": "es",
-                        "firstDay": 1,
+                        "firstDay": 1, # Lunes
                         "headerToolbar": {"left": "prev,next", "center": "title", "right": "today"}
                     }
                     
-                    calendar(events=events, options=cal_opts_user, key=f"cal_user_{nombre}")
-                    st.caption("🔴 Festivos Empresa | 🟢 Tus Vacaciones/Días")
+                    # --- EL TRUCO DE LA CLAVE ---
+                    # Usamos el nombre y la CANTIDAD de eventos. 
+                    # Si esto falla, añadiremos un st.button("Recargar") como último recurso.
+                    clave_empleado = f"cal_emp_{nombre}_{len(events)}"
+                    
+                    calendar(events=events, options=cal_opts_user, key=clave_empleado)
+                    
+                    st.caption("🔴 Festivos Empresa | 🟢 Tus Vacaciones")
                 else:
-                    st.info("No tienes vacaciones o días festivos registrados próximamente.")
+                    st.info("🗓️ No tienes vacaciones ni festivos registrados en el sistema.")
             else:
-                st.info("El calendario está vacío.")
+                st.warning("No hay datos en el calendario general.")
 
 # ==========================================
 # VISTA ADMIN
@@ -353,10 +366,10 @@ else:
                                     events.append({"title": tit, "start": d_iso, "end": d_iso, "backgroundColor": col, "borderColor": col, "allDay": True})
                                 except: pass
                         if events:
-                        # Configuración completa para forzar Lunes y Español
                             calendar_options = {
                                 "editable": False,
                                 "height": 700,
+                                "initialDate": datetime.now().strftime("%Y-%m-%d"), # <--- AÑADIR ESTO
                                 "headerToolbar": {
                                     "left": "today prev,next",
                                     "center": "title",
@@ -364,20 +377,15 @@ else:
                                 },
                                 "initialView": "dayGridMonth",
                                 "locale": "es",
-                                "firstDay": 1,  # <--- ESTA ES LA CLAVE: 1 = Lunes
-                                "buttonText": {
-                                    "today": "Hoy", 
-                                    "month": "Mes", 
-                                    "list": "Lista"
-                                },
-                                # Esto asegura que los nombres de los días también se traduzcan
-                                "dayHeaderFormat": { "weekday": "long" } 
+                                "firstDay": 1, # Lunes
+                                "buttonText": {"today": "Hoy", "month": "Mes", "list": "Lista"}
                             }
                             
-                            # Usamos el número de eventos y usuarios para la clave estable
-                            clave_estable = f"cal_v3_{len(events)}_{len(sel_users)}"
+                            # Clave basada en eventos Y usuarios seleccionados.
+                            # Al cargar la página, len(events) ya tiene un valor, así que debería pintarse.
+                            clave_admin = f"cal_admin_{len(events)}_{len(sel_users)}"
                             
-                            calendar(events=events, options=calendar_options, key=clave_estable)
+                            calendar(events=events, options=calendar_options, key=clave_admin)
                             
                             st.caption("🔴 Festivos Empresa | 🎨 Colores: Vacaciones individuales por empleado")
 
