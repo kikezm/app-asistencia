@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as datetime_time
 import time
 import os
 import streamlit_javascript as st_js
@@ -72,7 +72,9 @@ def generar_firma(fecha, hora, nombre, tipo, dispositivo):
 def verificar_integridad(row):
     try:
         firma = row.get('Firma', '')
-        if not firma: return "❌ SIN FIRMA"
+        # Si no hay firma, marcamos explícitamente como MANUAL/SIN FIRMA
+        if not firma: return "❌ SIN FIRMA (MANUAL)"
+        
         calc = generar_firma(row['Fecha'], row['Hora'], row['Empleado'], row['Tipo'], row['Dispositivo'])
         return "✅ OK" if firma == calc else "⚠️ MANIPULADO"
     except: return "❓ ERROR"
@@ -84,7 +86,6 @@ def obtener_nombre_por_token(token):
         if str(r.get('ID')).strip() == token_s: return r.get('Nombre')
     return None
 
-# --- MODIFICACIÓN CLAVE AQUÍ: Devolvemos Estado Y Hora ---
 def obtener_estado_actual(nombre):
     """Devuelve una tupla: (ESTADO, HORA_ULTIMO_MOVIMIENTO)"""
     data = cargar_datos_registros()
@@ -96,23 +97,14 @@ def obtener_estado_actual(nombre):
     df_emp = df[df['Empleado'] == nombre]
     if df_emp.empty: return "FUERA", None
     
-    # Limpieza
     df_emp = df_emp.dropna(subset=['Fecha', 'Hora'])
-    
-    # Ordenar cronológicamente
     df_emp['DT'] = pd.to_datetime(df_emp['Fecha'] + ' ' + df_emp['Hora'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
     df_emp = df_emp.sort_values(by='DT')
     
     if df_emp.empty: return "FUERA", None
     
-    ultimo_registro = df_emp.iloc[-1]
-    tipo = ultimo_registro['Tipo']
-    hora = ultimo_registro['Hora'] # Capturamos la hora
-    
-    if tipo == "ENTRADA":
-        return "DENTRO", hora
-    else:
-        return "FUERA", None
+    ultimo = df_emp.iloc[-1]
+    return ("DENTRO", ultimo['Hora']) if ultimo['Tipo'] == "ENTRADA" else ("FUERA", None)
 
 def puede_fichar_hoy(nombre):
     data = cargar_datos_calendario()
@@ -143,13 +135,8 @@ def registrar_fichaje(nombre, tipo, disp):
         st.error(f"Error al guardar: {e}")
 
 def obtener_color_por_nombre(nombre):
-    colores = [
-        "#3366CC", "#FF9900", "#109618", "#990099", "#0099C6", 
-        "#DD4477", "#66AA00", "#B82E2E", "#316395", "#884EA0",
-        "#16A085", "#F39C12", "#2E86C1", "#D35400", "#7D3C98"
-    ]
-    indice = abs(hash(nombre)) % len(colores)
-    return colores[indice]
+    colores = ["#3366CC", "#FF9900", "#109618", "#990099", "#0099C6", "#DD4477", "#66AA00", "#B82E2E", "#316395", "#884EA0"]
+    return colores[abs(hash(nombre)) % len(colores)]
 
 # --- INTERFAZ ---
 try:
@@ -176,24 +163,16 @@ if token_acceso:
             st.error("⛔ NO PUEDES FICHAR HOY")
             st.warning(f"Motivo: **{motivo}**")
         else:
-            # AQUI RECUPERAMOS EL ESTADO Y LA HORA
             estado, hora_entrada = obtener_estado_actual(nombre)
-            
             st.write("---")
             if estado == "FUERA":
                 st.markdown("### 🏠 Estás FUERA. ¿Entrar?")
                 if st.button("🟢 ENTRADA", use_container_width=True): registrar_fichaje(nombre, "ENTRADA", ua_string)
-            
             elif estado == "DENTRO":
-                # MENSAJE PERSONALIZADO CON LA HORA
-                # Recortamos la hora por si viene con segundos (HH:MM:SS) a (HH:MM) para que quede más limpio
                 hora_corta = hora_entrada[:5] if hora_entrada and len(hora_entrada) >= 5 else hora_entrada
-                
                 st.markdown(f"### 🏭 Has entrado a las **{hora_corta}**. ¿Salir?")
                 if st.button("🔴 SALIDA", use_container_width=True): registrar_fichaje(nombre, "SALIDA", ua_string)
-            
             else:
-                # Caso raro de error
                 c1,c2 = st.columns(2)
                 with c1: 
                     if st.button("🟢 ENTRADA"): registrar_fichaje(nombre, "ENTRADA", ua_string)
@@ -207,7 +186,8 @@ if token_acceso:
 # ==========================================
 else:
     st.sidebar.title("Administración")
-    menu = ["Generar Usuarios", "Calendario y Festivos", "Auditoría e Informes"]
+    # MENÚ NUEVO: Añadido "Corrección de Fichajes"
+    menu = ["Generar Usuarios", "Calendario y Festivos", "🔧 Corrección de Fichajes", "Auditoría e Informes"]
     opcion = st.sidebar.radio("Ir a:", menu)
     pwd = st.sidebar.text_input("Contraseña", type="password")
     
@@ -235,7 +215,6 @@ else:
                 st.info("Añadir días festivos o vacaciones.")
                 with st.form("add_cal"):
                     rango_fechas = st.date_input("Selecciona Rango (Inicio - Fin)", value=[], format="DD/MM/YYYY")
-                    
                     st.write("---")
                     c3, c4 = st.columns(2)
                     with c3:
@@ -245,33 +224,28 @@ else:
                             usrs = cargar_datos_usuarios()
                             l_n = [u['Nombre'] for u in usrs] if usrs else []
                             nom_emp = st.selectbox("Empleado:", l_n)
-                    
                     with c4:
                         modo = st.radio("Días:", ["Todos", "Solo Fines de Semana"])
-                    
                     motivo = st.text_input("Motivo (Ej: Vacaciones Verano)")
                     
                     if st.form_submit_button("💾 Guardar"):
                         if len(rango_fechas) == 0:
-                            st.error("Debes seleccionar al menos una fecha.")
+                            st.error("Selecciona fechas.")
                         else:
                             d_ini = rango_fechas[0]
                             d_fin = rango_fechas[1] if len(rango_fechas) > 1 else d_ini
-                            
                             sheet = conectar_google_sheets("Calendario")
                             rows = []
                             t_s = "GLOBAL" if "GLOBAL" in tipo else "INDIVIDUAL"
                             delta = d_fin - d_ini
-                            
                             for i in range(delta.days + 1):
                                 dia = d_ini + timedelta(days=i)
                                 if modo == "Solo Fines de Semana" and dia.weekday() < 5: continue
                                 rows.append([dia.strftime("%d/%m/%Y"), t_s, nom_emp, motivo])
-                            
                             if rows:
                                 sheet.append_rows(rows)
                                 st.cache_data.clear()
-                                st.success(f"Añadidos {len(rows)} días correctamente.")
+                                st.success(f"Añadidos {len(rows)} días.")
                                 time.sleep(1)
                                 st.rerun()
 
@@ -281,106 +255,94 @@ else:
                         df = pd.DataFrame(data)
                         df = df.dropna(how='all')
                         df['Aux'] = pd.to_datetime(df['Fecha'], format='%d/%m/%Y', errors='coerce')
-                        df = df.dropna(subset=['Aux'])
-                        df = df.sort_values(by='Aux')
-                        
+                        df = df.dropna(subset=['Aux']).sort_values(by='Aux')
                         df_edit = df.drop(columns=['Aux'])
-                        
                         ed = st.data_editor(df_edit, num_rows="dynamic", use_container_width=True, hide_index=True)
-                        
                         if st.button("💾 Guardar Cambios Tabla"):
                             df_final = ed.copy()
                             df_final['Aux'] = pd.to_datetime(df_final['Fecha'], format='%d/%m/%Y', errors='coerce')
                             df_final = df_final.dropna(subset=['Aux']).sort_values(by='Aux').drop(columns=['Aux'])
-                            
                             vals = [df_final.columns.values.tolist()] + df_final.values.tolist()
                             sheet = conectar_google_sheets("Calendario")
                             sheet.clear()
                             sheet.update(vals)
                             st.cache_data.clear()
-                            st.success("Tabla actualizada.")
+                            st.success("Actualizado.")
                             time.sleep(1)
                             st.rerun()
 
             with t_vis:
                 raw_cal = cargar_datos_calendario()
-                
                 if raw_cal:
                     df_c = pd.DataFrame(raw_cal)
-                    
-                    if 'Empleado' not in df_c.columns: df_c['Empleado'] = ""
-                    if 'Tipo' not in df_c.columns: df_c['Tipo'] = ""
-                    if 'Fecha' not in df_c.columns: df_c['Fecha'] = ""
-                    
-                    df_c = df_c[df_c['Fecha'].astype(bool)]
-                    
-                    indivs = df_c[df_c['Tipo'] == 'INDIVIDUAL']['Empleado'].unique().tolist()
-                    sel_users = st.multiselect("Filtrar Empleados:", sorted(indivs), default=sorted(indivs))
-                    
-                    events = []
-                    for _, r in df_c.iterrows():
-                        ver, col, tit = False, "#3788d8", ""
-                        
-                        tipo_r = str(r.get('Tipo', '')).strip()
-                        emp_r = str(r.get('Empleado', '')).strip()
-                        fecha_r = str(r.get('Fecha', '')).strip()
-                        
-                        if tipo_r == 'GLOBAL':
-                            ver = True
-                            col = "#D32F2F"
-                            tit = f"🏢 {r.get('Motivo')}"
-                        elif tipo_r == 'INDIVIDUAL' and emp_r in sel_users:
-                            ver = True
-                            col = obtener_color_por_nombre(emp_r)
-                            tit = f"✈️ {emp_r}: {r.get('Motivo')}"
-                        
-                        if ver and fecha_r:
-                            try:
-                                d_iso = datetime.strptime(fecha_r, "%d/%m/%Y").strftime("%Y-%m-%d")
-                                events.append({
-                                    "title": tit, 
-                                    "start": d_iso, 
-                                    "end": d_iso, 
-                                    "backgroundColor": col, 
-                                    "borderColor": col,
-                                    "allDay": True
-                                })
-                            except: pass
-                    
-                    if events:
-                        calendar_options = {
-                            "editable": False,
-                            "height": 700,
-                            "headerToolbar": {
-                                "left": "today prev,next",
-                                "center": "title",
-                                "right": "dayGridMonth,listMonth"
-                            },
-                            "initialView": "dayGridMonth",
-                            "locale": "es",
-                            "buttonText": {
-                                "today": "Hoy", "month": "Mes", "list": "Lista"
-                            }
-                        }
-                        
-                        clave_estable = f"cal_{len(events)}_{len(sel_users)}"
-                        calendar(events=events, options=calendar_options, key=clave_estable)
-                        
-                        st.caption("🔴 Festivos Empresa | 🎨 Colores: Vacaciones individuales por empleado")
-                    else:
-                        st.info("No hay eventos que mostrar.")
-                else:
-                    st.warning("No hay datos en el calendario.")
+                    if 'Empleado' in df_c.columns:
+                        df_c = df_c.dropna(subset=['Fecha'])
+                        indivs = df_c[df_c['Tipo'] == 'INDIVIDUAL']['Empleado'].unique().tolist()
+                        sel_users = st.multiselect("Filtrar Empleados:", sorted(indivs), default=sorted(indivs))
+                        events = []
+                        for _, r in df_c.iterrows():
+                            ver, col, tit = False, "#3788d8", ""
+                            tipo_r, emp_r, f_r = str(r.get('Tipo','')), str(r.get('Empleado','')), str(r.get('Fecha',''))
+                            if tipo_r == 'GLOBAL': ver, col, tit = True, "#D32F2F", f"🏢 {r.get('Motivo')}"
+                            elif tipo_r == 'INDIVIDUAL' and emp_r in sel_users: ver, col, tit = True, obtener_color_por_nombre(emp_r), f"✈️ {emp_r}: {r.get('Motivo')}"
+                            if ver and f_r:
+                                try:
+                                    d_iso = datetime.strptime(f_r, "%d/%m/%Y").strftime("%Y-%m-%d")
+                                    events.append({"title": tit, "start": d_iso, "end": d_iso, "backgroundColor": col, "borderColor": col, "allDay": True})
+                                except: pass
+                        if events:
+                            clave = f"cal_{len(events)}_{len(sel_users)}"
+                            calendar(events=events, options={"initialView": "dayGridMonth", "height": 700, "locale": "es", "headerToolbar": {"left": "today prev,next", "center": "title", "right": "dayGridMonth,listMonth"}}, key=clave)
+                            st.caption("🔴 Festivos | 🎨 Vacaciones Empleado")
 
-        # --- 3. AUDITORÍA ---
+        # --- 3. NUEVO: CORRECCIÓN DE FICHAJES ---
+        elif opcion == "🔧 Corrección de Fichajes":
+            st.header("🔧 Insertar Fichaje Manual")
+            st.warning("⚠️ Utiliza esto para corregir olvidos. El registro aparecerá como 'SIN FIRMA' en la auditoría.")
+            
+            with st.form("manual_entry"):
+                col_a, col_b = st.columns(2)
+                
+                # Cargar lista empleados
+                usrs = cargar_datos_usuarios()
+                lista_n = [u['Nombre'] for u in usrs] if usrs else []
+                
+                with col_a:
+                    emp_manual = st.selectbox("Empleado:", lista_n)
+                    fecha_manual = st.date_input("Fecha:", format="DD/MM/YYYY")
+                
+                with col_b:
+                    tipo_manual = st.selectbox("Tipo:", ["ENTRADA", "SALIDA"])
+                    hora_manual = st.time_input("Hora (HH:MM):", step=60)
+                
+                motivo_manual = st.text_input("Motivo de la corrección (Opcional):", placeholder="Ej: Olvido al fichar")
+                
+                if st.form_submit_button("💾 Guardar Registro Manual"):
+                    try:
+                        sheet = conectar_google_sheets("Hoja 1")
+                        f_str = fecha_manual.strftime("%d/%m/%Y")
+                        h_str = hora_manual.strftime("%H:%M:%S")
+                        
+                        # Dispositivo = MANUAL (ADMIN)
+                        disp_str = f"MANUAL (Admin) - {motivo_manual}"
+                        
+                        # FIRMA VACÍA ("") -> Esto provocará el aviso "SIN FIRMA"
+                        sheet.append_row([f_str, h_str, emp_manual, tipo_manual, disp_str, ""])
+                        
+                        st.cache_data.clear()
+                        st.success(f"✅ Registro añadido: {emp_manual} - {tipo_manual} a las {h_str}")
+                        time.sleep(2)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+
+        # --- 4. AUDITORÍA ---
         elif opcion == "Auditoría e Informes":
             st.header("🕵️ Auditoría")
             data = cargar_datos_registros()
-            
             if data:
                 df = pd.DataFrame(data)
                 df = df.dropna(subset=['Fecha', 'Hora'])
-                
                 df['Estado'] = df.apply(verificar_integridad, axis=1)
                 df['DT'] = pd.to_datetime(df['Fecha'] + ' ' + df['Hora'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
                 df = df.sort_values(by='DT', ascending=False)
@@ -389,7 +351,6 @@ else:
                 c1, c2 = st.columns(2)
                 meses = ["Todos"] + sorted(df['Mes'].dropna().unique().tolist(), reverse=True)
                 f_mes = c1.selectbox("Mes:", meses)
-                
                 emps_source = df[df['Mes'] == f_mes] if f_mes != "Todos" else df
                 emps = ["Todos"] + sorted(emps_source['Empleado'].unique().tolist())
                 f_emp = c2.selectbox("Empleado:", emps)
@@ -418,12 +379,10 @@ else:
                 with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                     df_f.reindex(columns=cols_vis).to_excel(writer, sheet_name='Reporte', index=False)
                     df_f.to_excel(writer, sheet_name='Datos_Completos', index=False)
-                
                 buffer.seek(0)
                 file_n = f"Reporte_{f_emp}_{f_mes.replace('/','-')}.xlsx"
-                st.download_button("📥 Descargar Excel (.xlsx)", buffer, file_n, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-            else:
-                st.warning("Sin datos.")
+                st.download_button("📥 Descargar Excel", buffer, file_n, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            else: st.warning("Sin datos.")
 
     elif pwd:
         st.error("Contraseña incorrecta")
