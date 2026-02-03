@@ -84,20 +84,35 @@ def obtener_nombre_por_token(token):
         if str(r.get('ID')).strip() == token_s: return r.get('Nombre')
     return None
 
+# --- MODIFICACIÓN CLAVE AQUÍ: Devolvemos Estado Y Hora ---
 def obtener_estado_actual(nombre):
+    """Devuelve una tupla: (ESTADO, HORA_ULTIMO_MOVIMIENTO)"""
     data = cargar_datos_registros()
-    if not data: return "FUERA"
-    df = pd.DataFrame(data)
-    if 'Empleado' not in df.columns: return "FUERA"
-    df_emp = df[df['Empleado'] == nombre]
-    if df_emp.empty: return "FUERA"
+    if not data: return "FUERA", None
     
+    df = pd.DataFrame(data)
+    if 'Empleado' not in df.columns: return "FUERA", None
+    
+    df_emp = df[df['Empleado'] == nombre]
+    if df_emp.empty: return "FUERA", None
+    
+    # Limpieza
     df_emp = df_emp.dropna(subset=['Fecha', 'Hora'])
+    
+    # Ordenar cronológicamente
     df_emp['DT'] = pd.to_datetime(df_emp['Fecha'] + ' ' + df_emp['Hora'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
     df_emp = df_emp.sort_values(by='DT')
     
-    if df_emp.empty: return "FUERA"
-    return "DENTRO" if df_emp.iloc[-1]['Tipo'] == "ENTRADA" else "FUERA"
+    if df_emp.empty: return "FUERA", None
+    
+    ultimo_registro = df_emp.iloc[-1]
+    tipo = ultimo_registro['Tipo']
+    hora = ultimo_registro['Hora'] # Capturamos la hora
+    
+    if tipo == "ENTRADA":
+        return "DENTRO", hora
+    else:
+        return "FUERA", None
 
 def puede_fichar_hoy(nombre):
     data = cargar_datos_calendario()
@@ -127,16 +142,12 @@ def registrar_fichaje(nombre, tipo, disp):
     except Exception as e:
         st.error(f"Error al guardar: {e}")
 
-# --- HELPER: ASIGNACIÓN DE COLORES POR NOMBRE ---
 def obtener_color_por_nombre(nombre):
-    # Paleta de colores agradables (excluyendo el rojo de festivos)
     colores = [
         "#3366CC", "#FF9900", "#109618", "#990099", "#0099C6", 
         "#DD4477", "#66AA00", "#B82E2E", "#316395", "#884EA0",
         "#16A085", "#F39C12", "#2E86C1", "#D35400", "#7D3C98"
     ]
-    # Usamos hash del nombre para asignar siempre el mismo color al mismo nombre
-    # abs() para evitar negativos, % len() para rotar si hay muchos empleados
     indice = abs(hash(nombre)) % len(colores)
     return colores[indice]
 
@@ -165,15 +176,24 @@ if token_acceso:
             st.error("⛔ NO PUEDES FICHAR HOY")
             st.warning(f"Motivo: **{motivo}**")
         else:
-            estado = obtener_estado_actual(nombre)
+            # AQUI RECUPERAMOS EL ESTADO Y LA HORA
+            estado, hora_entrada = obtener_estado_actual(nombre)
+            
             st.write("---")
             if estado == "FUERA":
                 st.markdown("### 🏠 Estás FUERA. ¿Entrar?")
                 if st.button("🟢 ENTRADA", use_container_width=True): registrar_fichaje(nombre, "ENTRADA", ua_string)
+            
             elif estado == "DENTRO":
-                st.markdown("### 🏭 Estás DENTRO. ¿Salir?")
+                # MENSAJE PERSONALIZADO CON LA HORA
+                # Recortamos la hora por si viene con segundos (HH:MM:SS) a (HH:MM) para que quede más limpio
+                hora_corta = hora_entrada[:5] if hora_entrada and len(hora_entrada) >= 5 else hora_entrada
+                
+                st.markdown(f"### 🏭 Has entrado a las **{hora_corta}**. ¿Salir?")
                 if st.button("🔴 SALIDA", use_container_width=True): registrar_fichaje(nombre, "SALIDA", ua_string)
+            
             else:
+                # Caso raro de error
                 c1,c2 = st.columns(2)
                 with c1: 
                     if st.button("🟢 ENTRADA"): registrar_fichaje(nombre, "ENTRADA", ua_string)
@@ -307,11 +327,10 @@ else:
                         
                         if tipo_r == 'GLOBAL':
                             ver = True
-                            col = "#D32F2F" # Rojo Oscuro para Festivos
+                            col = "#D32F2F"
                             tit = f"🏢 {r.get('Motivo')}"
                         elif tipo_r == 'INDIVIDUAL' and emp_r in sel_users:
                             ver = True
-                            # COLOR DINÁMICO POR EMPLEADO
                             col = obtener_color_por_nombre(emp_r)
                             tit = f"✈️ {emp_r}: {r.get('Motivo')}"
                         
@@ -344,11 +363,7 @@ else:
                             }
                         }
                         
-                        # CORRECCIÓN DE PARPADEO: 
-                        # Usamos el número de eventos y la selección de usuarios como clave.
-                        # SOLO cambia si cambian los datos, no con el tiempo.
                         clave_estable = f"cal_{len(events)}_{len(sel_users)}"
-                        
                         calendar(events=events, options=calendar_options, key=clave_estable)
                         
                         st.caption("🔴 Festivos Empresa | 🎨 Colores: Vacaciones individuales por empleado")
