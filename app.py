@@ -167,29 +167,81 @@ if token_acceso:
     
     if nombre:
         st.info(f"👋 Hola, **{nombre}**")
-        ok, motivo = puede_fichar_hoy(nombre)
         
-        if not ok:
-            st.error("⛔ NO PUEDES FICHAR HOY")
-            st.warning(f"Motivo: **{motivo}**")
-        else:
-            estado, hora_entrada = obtener_estado_actual(nombre)
-            st.write("---")
-            if estado == "FUERA":
-                st.markdown("### 🏠 Estás FUERA. ¿Entrar?")
-                if st.button("🟢 ENTRADA", use_container_width=True): registrar_fichaje(nombre, "ENTRADA", ua_string)
-            elif estado == "DENTRO":
-                hora_corta = hora_entrada[:5] if hora_entrada and len(hora_entrada) >= 5 else hora_entrada
-                st.markdown(f"### 🏭 Has entrado a las **{hora_corta}**. ¿Salir?")
-                if st.button("🔴 SALIDA", use_container_width=True): registrar_fichaje(nombre, "SALIDA", ua_string)
+        # Creamos dos pestañas para el trabajador
+        tab_fichar, tab_mis_vacaciones = st.tabs(["🕒 Fichar", "📅 Mis Vacaciones"])
+        
+        with tab_fichar:
+            ok, motivo = puede_fichar_hoy(nombre)
+            
+            if not ok:
+                st.error("⛔ NO PUEDES FICHAR HOY")
+                st.warning(f"Motivo: **{motivo}**")
             else:
-                c1,c2 = st.columns(2)
-                with c1: 
-                    if st.button("🟢 ENTRADA"): registrar_fichaje(nombre, "ENTRADA", ua_string)
-                with c2: 
-                    if st.button("🔴 SALIDA"): registrar_fichaje(nombre, "SALIDA", ua_string)
-    else:
-        st.error("⛔ Token inválido o expirado.")
+                estado, hora_entrada = obtener_estado_actual(nombre)
+                st.write("---")
+                if estado == "FUERA":
+                    st.markdown("### 🏠 Estás FUERA. ¿Entrar?")
+                    if st.button("🟢 ENTRADA", use_container_width=True): 
+                        registrar_fichaje(nombre, "ENTRADA", ua_string)
+                elif estado == "DENTRO":
+                    hora_corta = hora_entrada[:5] if hora_entrada and len(hora_entrada) >= 5 else hora_entrada
+                    st.markdown(f"### 🏭 Has entrado a las **{hora_corta}**. ¿Salir?")
+                    if st.button("🔴 SALIDA", use_container_width=True): 
+                        registrar_fichaje(nombre, "SALIDA", ua_string)
+
+        with tab_mis_vacaciones:
+            st.subheader("Tus días registrados")
+            raw_cal = cargar_datos_calendario()
+            
+            if raw_cal:
+                df_c = pd.DataFrame(raw_cal)
+                # Filtramos: Solo días GLOBALES o días de este EMPLEADO específico
+                df_user = df_c[
+                    (df_c['Tipo'] == 'GLOBAL') | 
+                    ((df_c['Tipo'] == 'INDIVIDUAL') & (df_c['Empleado'] == nombre))
+                ]
+                
+                if not df_user.empty:
+                    events = []
+                    for _, r in df_user.iterrows():
+                        tipo_r = str(r.get('Tipo', ''))
+                        fecha_r = str(r.get('Fecha', ''))
+                        
+                        if tipo_r == 'GLOBAL':
+                            col = "#D32F2F"  # Rojo para festivos empresa
+                            tit = f"🏢 {r.get('Motivo')}"
+                        else:
+                            col = "#109618"  # Verde para sus vacaciones
+                            tit = f"✈️ Mis Vacaciones: {r.get('Motivo')}"
+                        
+                        try:
+                            d_iso = datetime.strptime(fecha_r, "%d/%m/%Y").strftime("%Y-%m-%d")
+                            events.append({
+                                "title": tit, 
+                                "start": d_iso, 
+                                "end": d_iso, 
+                                "backgroundColor": col, 
+                                "borderColor": col,
+                                "allDay": True
+                            })
+                        except: pass
+                    
+                    # Opciones del calendario (Igual que en Admin pero simplificado)
+                    cal_opts_user = {
+                        "initialView": "dayGridMonth",
+                        "height": 500,
+                        "locale": "es",
+                        "firstDay": 1,
+                        "headerToolbar": {"left": "prev,next", "center": "title", "right": "today"}
+                    }
+                    
+                    calendar(events=events, options=cal_opts_user, key=f"cal_user_{nombre}")
+                    st.caption("🔴 Festivos Empresa | 🟢 Tus Vacaciones/Días")
+                else:
+                    st.info("No tienes vacaciones o días festivos registrados próximamente.")
+            else:
+                st.info("El calendario está vacío.")
 
 # ==========================================
 # VISTA ADMIN
