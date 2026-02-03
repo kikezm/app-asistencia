@@ -301,9 +301,33 @@ else:
                                     events.append({"title": tit, "start": d_iso, "end": d_iso, "backgroundColor": col, "borderColor": col, "allDay": True})
                                 except: pass
                         if events:
-                            clave = f"cal_{len(events)}_{len(sel_users)}"
-                            calendar(events=events, options={"initialView": "dayGridMonth", "height": 700, "locale": "es", "headerToolbar": {"left": "today prev,next", "center": "title", "right": "dayGridMonth,listMonth"}}, key=clave)
-                            st.caption("🔴 Festivos | 🎨 Vacaciones Empleado")
+                        # Configuración completa para forzar Lunes y Español
+                            calendar_options = {
+                                "editable": False,
+                                "height": 700,
+                                "headerToolbar": {
+                                    "left": "today prev,next",
+                                    "center": "title",
+                                    "right": "dayGridMonth,listMonth"
+                                },
+                                "initialView": "dayGridMonth",
+                                "locale": "es",
+                                "firstDay": 1,  # <--- ESTA ES LA CLAVE: 1 = Lunes
+                                "buttonText": {
+                                    "today": "Hoy", 
+                                    "month": "Mes", 
+                                    "list": "Lista"
+                                },
+                                # Esto asegura que los nombres de los días también se traduzcan
+                                "dayHeaderFormat": { "weekday": "long" } 
+                            }
+                            
+                            # Usamos el número de eventos y usuarios para la clave estable
+                            clave_estable = f"cal_v3_{len(events)}_{len(sel_users)}"
+                            
+                            calendar(events=events, options=calendar_options, key=clave_estable)
+                            
+                            st.caption("🔴 Festivos Empresa | 🎨 Colores: Vacaciones individuales por empleado")
 
         # --- 3. NUEVO: CORRECCIÓN DE FICHAJES ---
         elif opcion == "🔧 Corrección de Fichajes":
@@ -396,3 +420,4 @@ else:
 
     elif pwd:
         st.error("Contraseña incorrecta")
+        
