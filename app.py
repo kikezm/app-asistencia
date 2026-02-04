@@ -323,15 +323,68 @@ else:
         # --- 1. USUARIOS ---
         if opcion == "Generar Usuarios":
             st.header("👥 Gestión de Empleados")
+            
+            # A) Formulario de Creación
             with st.form("new_user"):
+                st.subheader("Nuevo Alta")
                 n_nombre = st.text_input("Nombre Completo")
+                
                 if st.form_submit_button("Crear Empleado"):
-                    sheet = conectar_google_sheets("Usuarios")
-                    uid = str(uuid.uuid4())
-                    sheet.append_row([uid, n_nombre])
-                    st.cache_data.clear()
-                    st.success(f"Creado: {n_nombre}")
-                    st.code(f"{APP_URL}/?token={uid}")
+                    if n_nombre:
+                        sheet = conectar_google_sheets("Usuarios")
+                        uid = str(uuid.uuid4())
+                        sheet.append_row([uid, n_nombre])
+                        st.cache_data.clear()
+                        st.success(f"✅ Creado: {n_nombre}")
+                        # Forzamos recarga para que salga en la tabla de abajo al instante
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("El nombre no puede estar vacío.")
+            
+            # B) Tabla de Usuarios Existentes (NUEVO)
+            st.write("---")
+            st.subheader("📋 Directorio de Accesos")
+            
+            usuarios = cargar_datos_usuarios()
+            
+            if usuarios:
+                df_u = pd.DataFrame(usuarios)
+                
+                # Comprobamos que existan las columnas correctas
+                if 'ID' in df_u.columns and 'Nombre' in df_u.columns:
+                    # Creamos la columna del Link combinando la URL base con el Token
+                    # APP_URL debe estar definido en tus secrets, si no, usa una cadena vacía o aviso
+                    base = APP_URL if 'APP_URL' in globals() and APP_URL else "https://tu-app.streamlit.app"
+                    
+                    df_u['Enlace de Acceso'] = df_u['ID'].apply(lambda x: f"{base}/?token={x}")
+                    
+                    # Seleccionamos solo lo que nos interesa mostrar
+                    df_mostrar = df_u[['Nombre', 'Enlace de Acceso']]
+                    
+                    # Mostramos la tabla. 
+                    # Usamos LinkColumn para que sea clicable, o texto plano para copiar fácil.
+                    st.dataframe(
+                        df_mostrar,
+                        column_config={
+                            "Nombre": st.column_config.TextColumn("Empleado", width="medium"),
+                            "Enlace de Acceso": st.column_config.LinkColumn(
+                                "Link Directo (Clic para abrir)",
+                                display_text=f"{base}/?token=..." # Muestra versión corta, el link real está detrás
+                            )
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
+                    
+                    # Opción extra por si quieren copiar el texto exacto masivamente
+                    with st.expander("Ver enlaces en texto plano (Para copiar y pegar)"):
+                        st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
+                        
+                else:
+                    st.error("Error: La hoja de 'Usuarios' no tiene las columnas ID y Nombre.")
+            else:
+                st.info("No hay usuarios registrados todavía.")
         
         # --- 2. CALENDARIO ---
         elif opcion == "Calendario y Festivos":
