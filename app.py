@@ -565,58 +565,5 @@ else:
     elif pwd:
         st.error("Contraseña incorrecta")
         
-
-# --- 5. DESCARGAR CSV SIMULADO ---
-        elif opcion == "⚡ Descargar CSV Simulación":
-            st.header("💾 Generar Archivo de Datos Masivos")
-            st.info("Esto generará un archivo .csv con los fichajes de 2025 para copiar y pegar en Google Sheets.")
-            
-            if st.button("Generar y Descargar CSV"):
-                # Lista de empleados
-                empleados = ["Kike Zamora", "Victor Perez", "Marta Vitoria", "Maria Serrano"]
-                
-                # Fechas
-                fecha_inicio = datetime(2025, 1, 1)
-                fecha_fin = datetime(2025, 12, 31)
-                dias_totales = (fecha_fin - fecha_inicio).days + 1
-                
-                rows = []
-                
-                # Barra de progreso
-                bar = st.progress(0)
-                
-                for i in range(dias_totales):
-                    dia_actual = fecha_inicio + timedelta(days=i)
-                    
-                    # Omitimos Sábados (5) y Domingos (6)
-                    if dia_actual.weekday() > 4:
-                        continue
-                    
-                    f_str = dia_actual.strftime("%d/%m/%Y")
-                    
-                    for emp in empleados:
-                        # --- ENTRADA ---
-                        # Generamos firma REAL usando tu SECRET_KEY
-                        firma_ent = generar_firma(f_str, "09:00:00", emp, "ENTRADA", "Simulador")
-                        rows.append([f_str, "09:00:00", emp, "ENTRADA", "Simulador", firma_ent])
-                        
-                        # --- SALIDA ---
-                        firma_sal = generar_firma(f_str, "17:00:00", emp, "SALIDA", "Simulador")
-                        rows.append([f_str, "17:00:00", emp, "SALIDA", "Simulador", firma_sal])
-                    
-                    bar.progress((i + 1) / dias_totales)
-                
-                # Convertimos a DataFrame para exportar fácil
-                df_sim = pd.DataFrame(rows, columns=["Fecha", "Hora", "Empleado", "Tipo", "Dispositivo", "Firma"])
-                
-                # Convertimos a CSV
-                csv = df_sim.to_csv(index=False, header=False).encode('utf-8')
-                
-                st.success(f"✅ ¡Generados {len(rows)} registros!")
-                
-                st.download_button(
-                    label="📥 Descargar datos_2025.csv",
-                    data=csv,
-                    file_name="datos_simulacion_2025.csv",
-                    mime="text/csv",
                 )
+
