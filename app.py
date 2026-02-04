@@ -567,54 +567,145 @@ else:
                     except Exception as e:
                         st.error(f"Error: {e}")
 
-        # --- 4. AUDITORÍA ---
+# --- 4. AUDITORÍA E INFORMES (MEJORADO CON CALENDARIO) ---
         elif opcion == "Auditoría e Informes":
-            st.header("🕵️ Auditoría")
+            st.header("🕵️ Auditoría y Control Horario")
+            
             data = cargar_datos_registros()
+            
             if data:
                 df = pd.DataFrame(data)
-                df = df.dropna(subset=['Fecha', 'Hora'])
+                df = df.dropna(subset=['Fecha', 'Hora']) # Limpieza
+                
+                # Procesamiento previo
                 df['Estado'] = df.apply(verificar_integridad, axis=1)
                 df['DT'] = pd.to_datetime(df['Fecha'] + ' ' + df['Hora'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
                 df = df.sort_values(by='DT', ascending=False)
                 df['Mes'] = df['DT'].dt.strftime('%m/%Y')
                 
+                # --- FILTROS SUPERIORES ---
                 c1, c2 = st.columns(2)
                 meses = ["Todos"] + sorted(df['Mes'].dropna().unique().tolist(), reverse=True)
-                f_mes = c1.selectbox("Mes:", meses)
+                f_mes = c1.selectbox("Filtrar por Mes:", meses)
+                
                 emps_source = df[df['Mes'] == f_mes] if f_mes != "Todos" else df
                 emps = ["Todos"] + sorted(emps_source['Empleado'].unique().tolist())
-                f_emp = c2.selectbox("Empleado:", emps)
+                f_emp = c2.selectbox("Filtrar por Empleado:", emps)
                 
+                # Filtrado de datos
                 df_f = df.copy()
                 if f_mes != "Todos": df_f = df_f[df_f['Mes'] == f_mes]
                 if f_emp != "Todos": df_f = df_f[df_f['Empleado'] == f_emp]
                 
+                # --- CÁLCULO DE HORAS TOTALES (Para la métrica) ---
                 tot_s = 0
                 for e in df_f['Empleado'].unique():
                     sub = df_f[df_f['Empleado'] == e].sort_values(by='DT')
                     ent = None
                     for _, r in sub.iterrows():
-                        if r['Tipo'] == 'ENTRADA': ent = r['DT']
+                        if r['Tipo'] == 'ENTRADA': 
+                            ent = r['DT']
                         elif r['Tipo'] == 'SALIDA' and ent:
                             tot_s += (r['DT'] - ent).total_seconds()
                             ent = None
                 
                 ht, mt = int(tot_s // 3600), int((tot_s % 3600) // 60)
-                st.metric("Horas Trabajadas (Selección)", f"{ht}h {mt}m")
-                
-                cols_vis = ['Fecha', 'Hora', 'Empleado', 'Tipo', 'Estado', 'Dispositivo']
-                st.dataframe(df_f.reindex(columns=cols_vis), use_container_width=True)
-                
-                buffer = io.BytesIO()
-                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                    df_f.reindex(columns=cols_vis).to_excel(writer, sheet_name='Reporte', index=False)
-                    df_f.to_excel(writer, sheet_name='Datos_Completos', index=False)
-                buffer.seek(0)
-                file_n = f"Reporte_{f_emp}_{f_mes.replace('/','-')}.xlsx"
-                st.download_button("📥 Descargar Excel", buffer, file_n, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-            else: st.warning("Sin datos.")
+                st.metric("Total Horas Trabajadas (Selección)", f"{ht}h {mt}m")
+                st.write("---")
 
-    elif pwd:
-        st.error("Contraseña incorrecta")
-        
+                # --- PESTAÑAS DE VISUALIZACIÓN ---
+                tab_lista, tab_cal_horas = st.tabs(["📄 Vista de Lista (Excel)", "📅 Vista Calendario Horario"])
+
+                # >>> PESTAÑA 1: TABLA (Lo que ya tenías)
+                with tab_lista:
+                    cols_vis = ['Fecha', 'Hora', 'Empleado', 'Tipo', 'Estado', 'Dispositivo']
+                    st.dataframe(
+                        df_f.reindex(columns=cols_vis), 
+                        use_container_width=True,
+                        column_config={
+                            "Estado": st.column_config.TextColumn("Validación"),
+                        }
+                    )
+                    
+                    # Botón descarga
+                    buffer = io.BytesIO()
+                    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                        df_f.reindex(columns=cols_vis).to_excel(writer, sheet_name='Reporte', index=False)
+                    buffer.seek(0)
+                    file_n = f"Reporte_{f_emp}_{f_mes.replace('/','-')}.xlsx"
+                    st.download_button("📥 Descargar Excel", buffer, file_n, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+                # >>> PESTAÑA 2: CALENDARIO DE HORAS TRABAJADAS (NUEVO)
+                with tab_cal_horas:
+                    if f_emp == "Todos":
+                        st.info("👈 Por favor, selecciona un **Empleado concreto** arriba para calcular sus horas diarias.")
+                        st.caption("El cálculo de horas diarias en calendario no está disponible para 'Todos' a la vez.")
+                    else:
+                        # Lógica para agrupar horas POR DÍA
+                        # 1. Ordenamos cronológicamente (antiguo a nuevo) para calcular pares
+                        df_calc = df_f.sort_values(by='DT', ascending=True)
+                        
+                        horas_por_dia = {} # Diccionario: {'2025-01-20': 28800 segundos, ...}
+                        ent = None
+                        
+                        for _, r in df_calc.iterrows():
+                            if r['Tipo'] == 'ENTRADA':
+                                ent = r['DT']
+                            elif r['Tipo'] == 'SALIDA' and ent:
+                                delta = (r['DT'] - ent).total_seconds()
+                                fecha_clave = ent.strftime("%Y-%m-%d")
+                                
+                                if fecha_clave in horas_por_dia:
+                                    horas_por_dia[fecha_clave] += delta
+                                else:
+                                    horas_por_dia[fecha_clave] = delta
+                                ent = None # Reseteamos par
+                        
+                        # Crear eventos para el calendario
+                        events_audit = []
+                        for fecha_iso, segundos in horas_por_dia.items():
+                            h_dia = int(segundos // 3600)
+                            m_dia = int((segundos % 3600) // 60)
+                            
+                            texto_evento = f"⏱️ {h_dia}h {m_dia}m"
+                            
+                            # Color dinámico según horas trabajadas
+                            # Rojo si < 5h, Naranja si < 8h, Verde si >= 8h (Ejemplo)
+                            if h_dia < 5: color_dia = "#D32F2F" # Poco tiempo
+                            elif h_dia < 8: color_dia = "#F57C00" # Jornada incompleta
+                            else: color_dia = "#1976D2" # Jornada completa (Azul)
+
+                            events_audit.append({
+                                "title": texto_evento,
+                                "start": fecha_iso,
+                                "end": fecha_iso,
+                                "allDay": True,
+                                "backgroundColor": color_dia,
+                                "borderColor": color_dia,
+                                "textColor": "#FFFFFF"
+                            })
+
+                        if events_audit:
+                            cal_opts_audit = {
+                                "editable": False,
+                                "height": 600,
+                                "initialDate": datetime.now().strftime("%Y-%m-%d"),
+                                "headerToolbar": {
+                                    "left": "today prev,next",
+                                    "center": "title",
+                                    "right": "dayGridMonth"
+                                },
+                                "initialView": "dayGridMonth",
+                                "locale": "es",
+                                "firstDay": 1
+                            }
+                            # Clave única
+                            key_audit = f"cal_audit_{f_emp}_{len(events_audit)}"
+                            calendar(events=events_audit, options=cal_opts_audit, key=key_audit)
+                            
+                            st.caption("🔵 Jornada Completa (>8h) | 🟠 Jornada Parcial | 🔴 Jornada Reducida (<5h)")
+                        else:
+                            st.warning("No hay registros de horas completas (Entrada + Salida) para mostrar en este periodo.")
+
+            else:
+                st.warning("No hay registros en la base de datos.")
