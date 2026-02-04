@@ -144,9 +144,20 @@ def registrar_fichaje(nombre, tipo, disp):
     except Exception as e:
         st.error(f"Error al guardar: {e}")
 
+# --- HELPER: ASIGNACIÓN DE COLORES MEJORADA ---
 def obtener_color_por_nombre(nombre):
-    colores = ["#3366CC", "#FF9900", "#109618", "#990099", "#0099C6", "#DD4477", "#66AA00", "#B82E2E", "#316395", "#884EA0"]
-    return colores[abs(hash(nombre)) % len(colores)]
+    # Paleta ampliada de 30 colores distintos (Material Design) para evitar repeticiones
+    colores = [
+        "#D32F2F", "#C2185B", "#7B1FA2", "#512DA8", "#303F9F",
+        "#1976D2", "#0288D1", "#0097A7", "#00796B", "#388E3C",
+        "#689F38", "#AFB42B", "#FBC02D", "#FFA000", "#F57C00",
+        "#E64A19", "#5D4037", "#616161", "#455A64", "#E91E63",
+        "#9C27B0", "#673AB7", "#3F51B5", "#2196F3", "#03A9F4",
+        "#00BCD4", "#4CAF50", "#8BC34A", "#CDDC39", "#FFC107"
+    ]
+    # Usamos hash del nombre para asignar siempre el mismo color al mismo nombre
+    indice = abs(hash(nombre)) % len(colores)
+    return colores[indice]
 
 # --- INTERFAZ ---
 try:
@@ -193,7 +204,7 @@ if token_acceso:
         with tab_mis_vacaciones:
             st.subheader("📅 Calendario de Equipo")
             
-            # Pequeño hack de espera visual
+            # Pausa visual para asegurar carga
             st.write("") 
             
             raw_cal = cargar_datos_calendario()
@@ -201,17 +212,17 @@ if token_acceso:
             if raw_cal:
                 df_c = pd.DataFrame(raw_cal)
                 
-                # Limpieza básica igual que en admin
+                # Limpieza de seguridad
                 if 'Empleado' not in df_c.columns: df_c['Empleado'] = ""
                 if 'Tipo' not in df_c.columns: df_c['Tipo'] = ""
                 if 'Fecha' not in df_c.columns: df_c['Fecha'] = ""
+                if 'Motivo' not in df_c.columns: df_c['Motivo'] = ""
                 
                 df_c = df_c[df_c['Fecha'].astype(bool)]
                 
-                # 1. FILTROS (Igual que en Admin, para que el usuario pueda limpiar la vista)
+                # Filtros
                 indivs = df_c[df_c['Tipo'] == 'INDIVIDUAL']['Empleado'].unique().tolist()
                 
-                # Por defecto mostramos a TODOS (para que vea las vacaciones de los demás)
                 sel_users = st.multiselect(
                     "Filtrar compañeros:", 
                     sorted(indivs), 
@@ -225,12 +236,13 @@ if token_acceso:
                     tipo_r = str(r.get('Tipo', '')).strip()
                     emp_r = str(r.get('Empleado', '')).strip()
                     fecha_r = str(r.get('Fecha', '')).strip()
+                    motivo_r = str(r.get('Motivo', '')).strip()
                     
                     # LÓGICA DE VISUALIZACIÓN
                     if tipo_r == 'GLOBAL':
                         ver = True
-                        col = "#D32F2F" # Rojo (Festivo)
-                        tit = f"🏢 {r.get('Motivo')}"
+                        col = "#000000" # Negro para festivos (destaca más)
+                        tit = f"🏢 {motivo_r}" # Mantenemos icono solo en Empresa
                     
                     elif tipo_r == 'INDIVIDUAL':
                         if emp_r in sel_users:
@@ -238,11 +250,13 @@ if token_acceso:
                             if emp_r == nombre:
                                 # ES MI VACACIÓN -> VERDE
                                 col = "#109618"
-                                tit = f"✅ TÚ: {r.get('Motivo')}"
+                                # Quitamos iconos, solo texto limpio
+                                tit = f"TÚ: {motivo_r}"
                             else:
-                                # ES DE UN COMPAÑERO -> AZUL (O Color dinámico)
+                                # ES DE UN COMPAÑERO -> COLOR DINÁMICO
                                 col = obtener_color_por_nombre(emp_r)
-                                tit = f"✈️ {emp_r}"
+                                # Quitamos el avión, formato: "Nombre: Motivo"
+                                tit = f"{emp_r}: {motivo_r}"
                     
                     if ver and fecha_r:
                         try:
@@ -253,16 +267,17 @@ if token_acceso:
                                 "end": d_iso, 
                                 "backgroundColor": col, 
                                 "borderColor": col,
-                                "allDay": True
+                                "allDay": True,
+                                # Hacemos el texto un poco más visible si el fondo es claro
+                                "textColor": "#FFFFFF" 
                             })
                         except: pass
                 
                 if events:
-                    # CONFIGURACIÓN IDÉNTICA A LA DE ADMIN (Que sabemos que funciona)
                     cal_opts_user = {
                         "editable": False,
                         "height": 650,
-                        "initialDate": datetime.now().strftime("%Y-%m-%d"), # CLAVE DEL ÉXITO
+                        "initialDate": datetime.now().strftime("%Y-%m-%d"),
                         "headerToolbar": {
                             "left": "today prev,next",
                             "center": "title",
@@ -274,16 +289,17 @@ if token_acceso:
                         "buttonText": {"today": "Hoy", "month": "Mes", "list": "Lista"}
                     }
                     
-                    # Clave dinámica basada en selección
-                    clave_user = f"cal_user_view_{len(events)}_{len(sel_users)}"
+                    clave_user = f"cal_user_final_{len(events)}_{len(sel_users)}"
                     
                     calendar(events=events, options=cal_opts_user, key=clave_user)
                     
-                    st.caption("🔴 Festivos | 🟢 Tus Días | 🔵 Compañeros")
+                    st.caption("🏢 Festivos | 🟢 Tus Días | 🎨 Compañeros")
                 else:
-                    st.info("No hay eventos que mostrar con los filtros actuales.")
+                    st.info("No hay eventos que mostrar.")
             else:
                 st.warning("El calendario está vacío.")
+
+
 
 # ==========================================
 # VISTA ADMIN
