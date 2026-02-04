@@ -217,16 +217,14 @@ if token_acceso:
 
         with tab_mis_vacaciones:
             st.subheader("📅 Calendario de Equipo")
-            
-            # Pausa visual para asegurar carga
-            st.write("") 
+            st.write("") # Pausa de carga
             
             raw_cal = cargar_datos_calendario()
             
             if raw_cal:
                 df_c = pd.DataFrame(raw_cal)
                 
-                # Limpieza de seguridad
+                # Limpiezas
                 if 'Empleado' not in df_c.columns: df_c['Empleado'] = ""
                 if 'Tipo' not in df_c.columns: df_c['Tipo'] = ""
                 if 'Fecha' not in df_c.columns: df_c['Fecha'] = ""
@@ -234,7 +232,6 @@ if token_acceso:
                 
                 df_c = df_c[df_c['Fecha'].astype(bool)]
                 
-                # Filtros
                 indivs = df_c[df_c['Tipo'] == 'INDIVIDUAL']['Empleado'].unique().tolist()
                 
                 sel_users = st.multiselect(
@@ -252,25 +249,24 @@ if token_acceso:
                     fecha_r = str(r.get('Fecha', '')).strip()
                     motivo_r = str(r.get('Motivo', '')).strip()
                     
-                    # LÓGICA DE VISUALIZACIÓN
+                    # LÓGICA VISUAL
                     if tipo_r == 'GLOBAL':
                         ver = True
-                        col = "#000000" # Negro para festivos (destaca más)
-                        tit = f"🏢 {motivo_r}" # Mantenemos icono solo en Empresa
+                        col = "#000000" # Negro
+                        # En festivos globales SÍ mostramos el motivo (ej: Navidad)
+                        tit = f"🏢 {motivo_r}"
                     
                     elif tipo_r == 'INDIVIDUAL':
                         if emp_r in sel_users:
                             ver = True
                             if emp_r == nombre:
-                                # ES MI VACACIÓN -> VERDE
-                                col = "#109618"
-                                # Quitamos iconos, solo texto limpio
-                                tit = f"TÚ: {motivo_r}"
+                                col = "#109618" # Verde para mí
+                                # SOLO NOMBRE (o "TÚ" para diferenciarlo claro)
+                                tit = "TÚ" 
                             else:
-                                # ES DE UN COMPAÑERO -> COLOR DINÁMICO
                                 col = obtener_color_por_nombre(emp_r)
-                                # Quitamos el avión, formato: "Nombre: Motivo"
-                                tit = f"{emp_r}: {motivo_r}"
+                                # CAMBIO AQUÍ: SOLO EL NOMBRE
+                                tit = emp_r
                     
                     if ver and fecha_r:
                         try:
@@ -282,8 +278,7 @@ if token_acceso:
                                 "backgroundColor": col, 
                                 "borderColor": col,
                                 "allDay": True,
-                                # Hacemos el texto un poco más visible si el fondo es claro
-                                "textColor": "#FFFFFF" 
+                                "textColor": "#FFFFFF"
                             })
                         except: pass
                 
@@ -303,15 +298,13 @@ if token_acceso:
                         "buttonText": {"today": "Hoy", "month": "Mes", "list": "Lista"}
                     }
                     
-                    clave_user = f"cal_user_final_{len(events)}_{len(sel_users)}"
-                    
+                    clave_user = f"cal_user_clean_{len(events)}_{len(sel_users)}"
                     calendar(events=events, options=cal_opts_user, key=clave_user)
-                    
                     st.caption("🏢 Festivos | 🟢 Tus Días | 🎨 Compañeros")
                 else:
-                    st.info("No hay eventos que mostrar.")
+                    st.info("No hay eventos.")
             else:
-                st.warning("El calendario está vacío.")
+                st.warning("Calendario vacío.")
 
 
 
@@ -406,19 +399,16 @@ else:
                             st.rerun()
 
             with t_vis:
-                # Recuperamos datos frescos
                 raw_cal = cargar_datos_calendario()
                 
                 if raw_cal:
                     df_c = pd.DataFrame(raw_cal)
                     
-                    # Limpiezas de seguridad
                     if 'Empleado' not in df_c.columns: df_c['Empleado'] = ""
                     if 'Tipo' not in df_c.columns: df_c['Tipo'] = ""
                     if 'Fecha' not in df_c.columns: df_c['Fecha'] = ""
                     if 'Motivo' not in df_c.columns: df_c['Motivo'] = ""
                     
-                    # Quitamos filas vacías
                     df_c = df_c[df_c['Fecha'].astype(bool)]
                     
                     indivs = df_c[df_c['Tipo'] == 'INDIVIDUAL']['Empleado'].unique().tolist()
@@ -433,17 +423,15 @@ else:
                         fecha_r = str(r.get('Fecha', '')).strip()
                         motivo_r = str(r.get('Motivo', '')).strip()
                         
-                        # LÓGICA DE VISUALIZACIÓN MEJORADA
                         if tipo_r == 'GLOBAL':
                             ver = True
-                            col = "#000000" # Negro puro para Festivos (destaca sobre todo)
+                            col = "#000000"
                             tit = f"🏢 {motivo_r}"
                         elif tipo_r == 'INDIVIDUAL' and emp_r in sel_users:
                             ver = True
-                            # Color de alto contraste
                             col = obtener_color_por_nombre(emp_r)
-                            # Formato limpio: "Nombre: Motivo" (Sin icono de avión)
-                            tit = f"{emp_r}: {motivo_r}"
+                            # CAMBIO AQUÍ: SOLO EL NOMBRE
+                            tit = emp_r
                         
                         if ver and fecha_r:
                             try:
@@ -455,16 +443,14 @@ else:
                                     "backgroundColor": col, 
                                     "borderColor": col,
                                     "allDay": True,
-                                    "textColor": "#FFFFFF" # Texto blanco para leerse bien sobre colores fuertes
+                                    "textColor": "#FFFFFF"
                                 })
-                            except: 
-                                pass 
+                            except: pass 
                     
                     if events:
                         calendar_options = {
                             "editable": False,
                             "height": 700,
-                            # FIX: Forzar fecha inicial hoy para evitar calendario blanco
                             "initialDate": datetime.now().strftime("%Y-%m-%d"),
                             "headerToolbar": {
                                 "left": "today prev,next",
@@ -473,22 +459,17 @@ else:
                             },
                             "initialView": "dayGridMonth",
                             "locale": "es",
-                            "firstDay": 1, # Lunes
-                            "buttonText": {
-                                "today": "Hoy", "month": "Mes", "list": "Lista"
-                            }
+                            "firstDay": 1,
+                            "buttonText": {"today": "Hoy", "month": "Mes", "list": "Lista"}
                         }
                         
-                        # Clave dinámica para recarga forzosa
-                        clave_dinamica = f"cal_admin_final_{len(events)}_{len(sel_users)}"
-                        
+                        clave_dinamica = f"cal_admin_clean_{len(events)}_{len(sel_users)}"
                         calendar(events=events, options=calendar_options, key=clave_dinamica)
-                        
-                        st.caption("⬛ Festivos Empresa | 🎨 Colores por Empleado (Sin iconos)")
+                        st.caption("⬛ Festivos Empresa | 🎨 Vacaciones (Solo Nombre)")
                     else:
-                        st.info("No hay eventos que mostrar.")
+                        st.info("No hay eventos.")
                 else:
-                    st.warning("No hay datos en el calendario.")
+                    st.warning("Sin datos.")
 
 
 
