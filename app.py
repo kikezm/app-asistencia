@@ -191,9 +191,9 @@ if token_acceso:
                         registrar_fichaje(nombre, "SALIDA", ua_string)
 
         with tab_mis_vacaciones:
-            st.subheader("📅 Tus días registrados")
+            st.subheader("📅 Calendario de Equipo")
             
-            # Forzamos una pequeña pausa/escritura invisible para dar tiempo a la pestaña a abrirse
+            # Pequeño hack de espera visual
             st.write("") 
             
             raw_cal = cargar_datos_calendario()
@@ -201,60 +201,89 @@ if token_acceso:
             if raw_cal:
                 df_c = pd.DataFrame(raw_cal)
                 
-                # Filtro: Días GLOBALES o días de ESTE empleado
-                df_user = df_c[
-                    (df_c['Tipo'] == 'GLOBAL') | 
-                    ((df_c['Tipo'] == 'INDIVIDUAL') & (df_c['Empleado'] == nombre))
-                ]
+                # Limpieza básica igual que en admin
+                if 'Empleado' not in df_c.columns: df_c['Empleado'] = ""
+                if 'Tipo' not in df_c.columns: df_c['Tipo'] = ""
+                if 'Fecha' not in df_c.columns: df_c['Fecha'] = ""
+                
+                df_c = df_c[df_c['Fecha'].astype(bool)]
+                
+                # 1. FILTROS (Igual que en Admin, para que el usuario pueda limpiar la vista)
+                indivs = df_c[df_c['Tipo'] == 'INDIVIDUAL']['Empleado'].unique().tolist()
+                
+                # Por defecto mostramos a TODOS (para que vea las vacaciones de los demás)
+                sel_users = st.multiselect(
+                    "Filtrar compañeros:", 
+                    sorted(indivs), 
+                    default=sorted(indivs)
+                )
                 
                 events = []
-                for _, r in df_user.iterrows():
-                    tipo_r = str(r.get('Tipo', ''))
-                    fecha_r = str(r.get('Fecha', ''))
-                    motivo_r = str(r.get('Motivo', ''))
+                for _, r in df_c.iterrows():
+                    ver, col, tit = False, "#3788d8", ""
                     
+                    tipo_r = str(r.get('Tipo', '')).strip()
+                    emp_r = str(r.get('Empleado', '')).strip()
+                    fecha_r = str(r.get('Fecha', '')).strip()
+                    
+                    # LÓGICA DE VISUALIZACIÓN
                     if tipo_r == 'GLOBAL':
-                        col = "#D32F2F" # Rojo
-                        tit = f"🏢 {motivo_r}"
-                    else:
-                        col = "#109618" # Verde
-                        tit = f"✈️ {motivo_r}"
+                        ver = True
+                        col = "#D32F2F" # Rojo (Festivo)
+                        tit = f"🏢 {r.get('Motivo')}"
                     
-                    try:
-                        d_iso = datetime.strptime(fecha_r, "%d/%m/%Y").strftime("%Y-%m-%d")
-                        events.append({
-                            "title": tit, 
-                            "start": d_iso, 
-                            "end": d_iso, 
-                            "backgroundColor": col, 
-                            "borderColor": col,
-                            "allDay": True
-                        })
-                    except: pass
+                    elif tipo_r == 'INDIVIDUAL':
+                        if emp_r in sel_users:
+                            ver = True
+                            if emp_r == nombre:
+                                # ES MI VACACIÓN -> VERDE
+                                col = "#109618"
+                                tit = f"✅ TÚ: {r.get('Motivo')}"
+                            else:
+                                # ES DE UN COMPAÑERO -> AZUL (O Color dinámico)
+                                col = obtener_color_por_nombre(emp_r)
+                                tit = f"✈️ {emp_r}"
+                    
+                    if ver and fecha_r:
+                        try:
+                            d_iso = datetime.strptime(fecha_r, "%d/%m/%Y").strftime("%Y-%m-%d")
+                            events.append({
+                                "title": tit, 
+                                "start": d_iso, 
+                                "end": d_iso, 
+                                "backgroundColor": col, 
+                                "borderColor": col,
+                                "allDay": True
+                            })
+                        except: pass
                 
                 if events:
-                    # Opciones robustas
+                    # CONFIGURACIÓN IDÉNTICA A LA DE ADMIN (Que sabemos que funciona)
                     cal_opts_user = {
+                        "editable": False,
+                        "height": 650,
+                        "initialDate": datetime.now().strftime("%Y-%m-%d"), # CLAVE DEL ÉXITO
+                        "headerToolbar": {
+                            "left": "today prev,next",
+                            "center": "title",
+                            "right": "dayGridMonth,listMonth"
+                        },
                         "initialView": "dayGridMonth",
-                        "initialDate": datetime.now().strftime("%Y-%m-%d"), # <--- FORZAMOS FECHA DE HOY
-                        "height": 600, # Altura fija importante
                         "locale": "es",
-                        "firstDay": 1, # Lunes
-                        "headerToolbar": {"left": "prev,next", "center": "title", "right": "today"}
+                        "firstDay": 1,
+                        "buttonText": {"today": "Hoy", "month": "Mes", "list": "Lista"}
                     }
                     
-                    # --- EL TRUCO DE LA CLAVE ---
-                    # Usamos el nombre y la CANTIDAD de eventos. 
-                    # Si esto falla, añadiremos un st.button("Recargar") como último recurso.
-                    clave_empleado = f"cal_emp_{nombre}_{len(events)}"
+                    # Clave dinámica basada en selección
+                    clave_user = f"cal_user_view_{len(events)}_{len(sel_users)}"
                     
-                    calendar(events=events, options=cal_opts_user, key=clave_empleado)
+                    calendar(events=events, options=cal_opts_user, key=clave_user)
                     
-                    st.caption("🔴 Festivos Empresa | 🟢 Tus Vacaciones")
+                    st.caption("🔴 Festivos | 🟢 Tus Días | 🔵 Compañeros")
                 else:
-                    st.info("🗓️ No tienes vacaciones ni festivos registrados en el sistema.")
+                    st.info("No hay eventos que mostrar con los filtros actuales.")
             else:
-                st.warning("No hay datos en el calendario general.")
+                st.warning("El calendario está vacío.")
 
 # ==========================================
 # VISTA ADMIN
