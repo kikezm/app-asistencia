@@ -144,20 +144,34 @@ def registrar_fichaje(nombre, tipo, disp):
     except Exception as e:
         st.error(f"Error al guardar: {e}")
 
-# --- HELPER: ASIGNACIÓN DE COLORES MEJORADA ---
+# --- HELPER: PALETA DE ALTO CONTRASTE ---
 def obtener_color_por_nombre(nombre):
-    # Paleta ampliada de 30 colores distintos (Material Design) para evitar repeticiones
-    colores = [
-        "#D32F2F", "#C2185B", "#7B1FA2", "#512DA8", "#303F9F",
-        "#1976D2", "#0288D1", "#0097A7", "#00796B", "#388E3C",
-        "#689F38", "#AFB42B", "#FBC02D", "#FFA000", "#F57C00",
-        "#E64A19", "#5D4037", "#616161", "#455A64", "#E91E63",
-        "#9C27B0", "#673AB7", "#3F51B5", "#2196F3", "#03A9F4",
-        "#00BCD4", "#4CAF50", "#8BC34A", "#CDDC39", "#FFC107"
+    # Lista diseñada manualmente para máximo contraste visual
+    # Evitamos gamas de azules o verdes seguidos.
+    colores_contrastados = [
+        "#E6194B", # Rojo brillante
+        "#3CB44B", # Verde vibrante
+        "#FFE119", # Amarillo (Ojo, usaremos texto negro con este si fuera auto, pero el blanco se lee regular, mejor ocre) -> Cambiado a Oro oscuro:
+        "#D4C200", # Oro oscuro
+        "#4363D8", # Azul fuerte
+        "#F58231", # Naranja
+        "#911EB4", # Violeta
+        "#42D4F4", # Cian
+        "#F032E6", # Magenta
+        "#BFEF45", # Lima
+        "#FABED4", # Rosa palo
+        "#469990", # Verde azulado
+        "#DCBEFF", # Lavanda
+        "#9A6324", # Marrón
+        "#800000", # Granate
+        "#AAFFC3", # Verde menta
+        "#808000", # Oliva
+        "#000075", # Azul marino oscuro
+        "#A9A9A9"  # Gris
     ]
-    # Usamos hash del nombre para asignar siempre el mismo color al mismo nombre
-    indice = abs(hash(nombre)) % len(colores)
-    return colores[indice]
+    # Usamos hash para asignar siempre el mismo color al mismo nombre
+    indice = abs(hash(nombre)) % len(colores_contrastados)
+    return colores_contrastados[indice]
 
 # --- INTERFAZ ---
 try:
@@ -392,47 +406,91 @@ else:
                             st.rerun()
 
             with t_vis:
+                # Recuperamos datos frescos
                 raw_cal = cargar_datos_calendario()
+                
                 if raw_cal:
                     df_c = pd.DataFrame(raw_cal)
-                    if 'Empleado' in df_c.columns:
-                        df_c = df_c.dropna(subset=['Fecha'])
-                        indivs = df_c[df_c['Tipo'] == 'INDIVIDUAL']['Empleado'].unique().tolist()
-                        sel_users = st.multiselect("Filtrar Empleados:", sorted(indivs), default=sorted(indivs))
-                        events = []
-                        for _, r in df_c.iterrows():
-                            ver, col, tit = False, "#3788d8", ""
-                            tipo_r, emp_r, f_r = str(r.get('Tipo','')), str(r.get('Empleado','')), str(r.get('Fecha',''))
-                            if tipo_r == 'GLOBAL': ver, col, tit = True, "#D32F2F", f"🏢 {r.get('Motivo')}"
-                            elif tipo_r == 'INDIVIDUAL' and emp_r in sel_users: ver, col, tit = True, obtener_color_por_nombre(emp_r), f"✈️ {emp_r}: {r.get('Motivo')}"
-                            if ver and f_r:
-                                try:
-                                    d_iso = datetime.strptime(f_r, "%d/%m/%Y").strftime("%Y-%m-%d")
-                                    events.append({"title": tit, "start": d_iso, "end": d_iso, "backgroundColor": col, "borderColor": col, "allDay": True})
-                                except: pass
-                        if events:
-                            calendar_options = {
-                                "editable": False,
-                                "height": 700,
-                                "initialDate": datetime.now().strftime("%Y-%m-%d"), # <--- AÑADIR ESTO
-                                "headerToolbar": {
-                                    "left": "today prev,next",
-                                    "center": "title",
-                                    "right": "dayGridMonth,listMonth"
-                                },
-                                "initialView": "dayGridMonth",
-                                "locale": "es",
-                                "firstDay": 1, # Lunes
-                                "buttonText": {"today": "Hoy", "month": "Mes", "list": "Lista"}
+                    
+                    # Limpiezas de seguridad
+                    if 'Empleado' not in df_c.columns: df_c['Empleado'] = ""
+                    if 'Tipo' not in df_c.columns: df_c['Tipo'] = ""
+                    if 'Fecha' not in df_c.columns: df_c['Fecha'] = ""
+                    if 'Motivo' not in df_c.columns: df_c['Motivo'] = ""
+                    
+                    # Quitamos filas vacías
+                    df_c = df_c[df_c['Fecha'].astype(bool)]
+                    
+                    indivs = df_c[df_c['Tipo'] == 'INDIVIDUAL']['Empleado'].unique().tolist()
+                    sel_users = st.multiselect("Filtrar Empleados:", sorted(indivs), default=sorted(indivs))
+                    
+                    events = []
+                    for _, r in df_c.iterrows():
+                        ver, col, tit = False, "#3788d8", ""
+                        
+                        tipo_r = str(r.get('Tipo', '')).strip()
+                        emp_r = str(r.get('Empleado', '')).strip()
+                        fecha_r = str(r.get('Fecha', '')).strip()
+                        motivo_r = str(r.get('Motivo', '')).strip()
+                        
+                        # LÓGICA DE VISUALIZACIÓN MEJORADA
+                        if tipo_r == 'GLOBAL':
+                            ver = True
+                            col = "#000000" # Negro puro para Festivos (destaca sobre todo)
+                            tit = f"🏢 {motivo_r}"
+                        elif tipo_r == 'INDIVIDUAL' and emp_r in sel_users:
+                            ver = True
+                            # Color de alto contraste
+                            col = obtener_color_por_nombre(emp_r)
+                            # Formato limpio: "Nombre: Motivo" (Sin icono de avión)
+                            tit = f"{emp_r}: {motivo_r}"
+                        
+                        if ver and fecha_r:
+                            try:
+                                d_iso = datetime.strptime(fecha_r, "%d/%m/%Y").strftime("%Y-%m-%d")
+                                events.append({
+                                    "title": tit, 
+                                    "start": d_iso, 
+                                    "end": d_iso, 
+                                    "backgroundColor": col, 
+                                    "borderColor": col,
+                                    "allDay": True,
+                                    "textColor": "#FFFFFF" # Texto blanco para leerse bien sobre colores fuertes
+                                })
+                            except: 
+                                pass 
+                    
+                    if events:
+                        calendar_options = {
+                            "editable": False,
+                            "height": 700,
+                            # FIX: Forzar fecha inicial hoy para evitar calendario blanco
+                            "initialDate": datetime.now().strftime("%Y-%m-%d"),
+                            "headerToolbar": {
+                                "left": "today prev,next",
+                                "center": "title",
+                                "right": "dayGridMonth,listMonth"
+                            },
+                            "initialView": "dayGridMonth",
+                            "locale": "es",
+                            "firstDay": 1, # Lunes
+                            "buttonText": {
+                                "today": "Hoy", "month": "Mes", "list": "Lista"
                             }
-                            
-                            # Clave basada en eventos Y usuarios seleccionados.
-                            # Al cargar la página, len(events) ya tiene un valor, así que debería pintarse.
-                            clave_admin = f"cal_admin_{len(events)}_{len(sel_users)}"
-                            
-                            calendar(events=events, options=calendar_options, key=clave_admin)
-                            
-                            st.caption("🔴 Festivos Empresa | 🎨 Colores: Vacaciones individuales por empleado")
+                        }
+                        
+                        # Clave dinámica para recarga forzosa
+                        clave_dinamica = f"cal_admin_final_{len(events)}_{len(sel_users)}"
+                        
+                        calendar(events=events, options=calendar_options, key=clave_dinamica)
+                        
+                        st.caption("⬛ Festivos Empresa | 🎨 Colores por Empleado (Sin iconos)")
+                    else:
+                        st.info("No hay eventos que mostrar.")
+                else:
+                    st.warning("No hay datos en el calendario.")
+
+
 
         # --- 3. NUEVO: CORRECCIÓN DE FICHAJES ---
         elif opcion == "🔧 Corrección de Fichajes":
