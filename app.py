@@ -54,24 +54,36 @@ def conectar_google_sheets(nombre_hoja_especifica):
     except:
         return None
 
-# --- FUNCIONES DE LECTURA CON CACHÉ INTELIGENTE ---
+# --- FUNCIONES DE LECTURA CON CACHÉ INTELIGENTE Y REINTENTOS ---
+# Esta función ayuda a reintentar si Google da error de "demasiadas peticiones"
+def leer_con_reintento(nombre_hoja):
+    max_intentos = 3
+    for i in range(max_intentos):
+        try:
+            sheet = conectar_google_sheets(nombre_hoja)
+            if sheet:
+                return sheet.get_all_records()
+            return []
+        except Exception as e:
+            # Si es el último intento, fallamos de verdad
+            if i == max_intentos - 1:
+                st.error(f"⚠️ Error de conexión con Google Sheets ({nombre_hoja}): {e}")
+                return []
+            # Si no, esperamos un poco (backoff exponencial) antes de reintentar
+            time.sleep(2 * (i + 1)) 
+    return []
+
 @st.cache_data(ttl=600)
 def cargar_datos_usuarios():
-    sheet = conectar_google_sheets("Usuarios")
-    if sheet: return sheet.get_all_records()
-    return []
+    return leer_con_reintento("Usuarios")
 
 @st.cache_data(ttl=600)
 def cargar_datos_calendario():
-    sheet = conectar_google_sheets("Calendario")
-    if sheet: return sheet.get_all_records()
-    return []
+    return leer_con_reintento("Calendario")
 
 @st.cache_data(ttl=60)
 def cargar_datos_registros():
-    sheet = conectar_google_sheets("Hoja 1")
-    if sheet: return sheet.get_all_records()
-    return []
+    return leer_con_reintento("Hoja 1")
 
 # --- FUNCIONES LÓGICAS ---
 def generar_firma(fecha, hora, nombre, tipo, dispositivo):
