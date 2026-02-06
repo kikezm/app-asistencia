@@ -401,13 +401,13 @@ else:
         # --- 2. CALENDARIO ---
         elif opcion == "Calendario y Festivos":
             st.header("📅 Calendario Laboral")
-            t_gest, t_vis = st.tabs(["✍️ Gestión", "👀 Visualizar"])
+            t_gest, t_vis = st.tabs(["✍️ Gestión (Añadir/Borrar)", "👀 Visualizar"])
             
             with t_gest:
-                st.info("Añadir días festivos o vacaciones.")
+                # --- PARTE A: AÑADIR NUEVOS ---
+                st.subheader("1. Añadir Nuevos Días")
                 with st.form("add_cal"):
                     rango_fechas = st.date_input("Selecciona Rango (Inicio - Fin)", value=[], format="DD/MM/YYYY")
-                    st.write("---")
                     c3, c4 = st.columns(2)
                     with c3:
                         tipo = st.selectbox("Tipo", ["INDIVIDUAL (Un empleado)", "GLOBAL (Empresa)"])
@@ -420,9 +420,9 @@ else:
                         modo = st.radio("Días:", ["Todos", "Solo Fines de Semana"])
                     motivo = st.text_input("Motivo (Ej: Vacaciones Verano)")
                     
-                    if st.form_submit_button("💾 Guardar"):
+                    if st.form_submit_button("➕ Añadir al Calendario"):
                         if len(rango_fechas) == 0:
-                            st.error("Selecciona fechas.")
+                            st.error("Debes seleccionar al menos una fecha.")
                         else:
                             d_ini = rango_fechas[0]
                             d_fin = rango_fechas[1] if len(rango_fechas) > 1 else d_ini
@@ -437,35 +437,64 @@ else:
                             if rows:
                                 sheet.append_rows(rows)
                                 st.cache_data.clear()
-                                st.success(f"Añadidos {len(rows)} días.")
+                                st.success(f"✅ Añadidos {len(rows)} días correctamente.")
                                 time.sleep(1)
                                 st.rerun()
 
-                with st.expander("📂 Ver Tabla Completa"):
-                    data = cargar_datos_calendario()
-                    if data:
-                        df = pd.DataFrame(data)
-                        df = df.dropna(how='all')
+                st.write("---")
+                
+                # --- PARTE B: MODIFICAR / BORRAR (MEJORADO) ---
+                st.subheader("2. 📝 Modificar o Borrar Existentes")
+                st.info("💡 **Instrucciones:** Haz clic en una celda para editarla. Selecciona las filas (checkbox izquierda) y pulsa **Suprimir** en tu teclado para borrarlas.")
+                
+                data = cargar_datos_calendario()
+                if data:
+                    df = pd.DataFrame(data)
+                    
+                    # Preparación de datos
+                    if 'Fecha' in df.columns:
                         df['Aux'] = pd.to_datetime(df['Fecha'], format='%d/%m/%Y', errors='coerce')
-                        df = df.dropna(subset=['Aux']).sort_values(by='Aux')
-                        df_edit = df.drop(columns=['Aux'])
-                        ed = st.data_editor(df_edit, num_rows="dynamic", use_container_width=True, hide_index=True)
-                        if st.button("💾 Guardar Cambios Tabla"):
-                            df_final = ed.copy()
-                            df_final['Aux'] = pd.to_datetime(df_final['Fecha'], format='%d/%m/%Y', errors='coerce')
-                            df_final = df_final.dropna(subset=['Aux']).sort_values(by='Aux').drop(columns=['Aux'])
-                            vals = [df_final.columns.values.tolist()] + df_final.values.tolist()
-                            sheet = conectar_google_sheets("Calendario")
-                            sheet.clear()
-                            sheet.update(vals)
-                            st.cache_data.clear()
-                            st.success("Actualizado.")
-                            time.sleep(1)
-                            st.rerun()
+                        df = df.sort_values(by='Aux', ascending=False) # Ordenar: Mas reciente arriba
+                        df = df.drop(columns=['Aux'])
+                    
+                    # TABLA EDITABLE
+                    # num_rows="dynamic" permite añadir y BORRAR filas
+                    df_editado = st.data_editor(
+                        df, 
+                        num_rows="dynamic", 
+                        use_container_width=True,
+                        key="editor_vacaciones",
+                        column_config={
+                            "Fecha": st.column_config.TextColumn("Fecha (DD/MM/YYYY)"),
+                            "Tipo": st.column_config.SelectboxColumn("Tipo", options=["GLOBAL", "INDIVIDUAL"]),
+                            "Empleado": st.column_config.TextColumn("Empleado"),
+                            "Motivo": st.column_config.TextColumn("Motivo")
+                        }
+                    )
+                    
+                    col_save, col_info = st.columns([1, 2])
+                    with col_save:
+                        if st.button("💾 Guardar Cambios Tabla", type="primary"):
+                            try:
+                                # Convertimos el DF editado a lista de listas
+                                vals = [df_editado.columns.values.tolist()] + df_editado.values.tolist()
+                                
+                                sheet = conectar_google_sheets("Calendario")
+                                sheet.clear() # Borramos todo
+                                sheet.update(vals) # Escribimos lo nuevo (sin las filas borradas)
+                                
+                                st.cache_data.clear()
+                                st.success("✅ Calendario actualizado correctamente.")
+                                time.sleep(1)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error al guardar: {e}")
+                else:
+                    st.warning("No hay datos en el calendario para editar.")
 
+            # --- PESTAÑA VISUALIZAR (Mantenemos tu versión limpia) ---
             with t_vis:
                 raw_cal = cargar_datos_calendario()
-                
                 if raw_cal:
                     df_c = pd.DataFrame(raw_cal)
                     
@@ -489,52 +518,28 @@ else:
                         motivo_r = str(r.get('Motivo', '')).strip()
                         
                         if tipo_r == 'GLOBAL':
-                            ver = True
-                            col = "#000000"
-                            tit = f"🏢 {motivo_r}"
+                            ver, col, tit = True, "#000000", f"🏢 {motivo_r}"
                         elif tipo_r == 'INDIVIDUAL' and emp_r in sel_users:
-                            ver = True
-                            col = obtener_color_por_nombre(emp_r)
-                            # CAMBIO AQUÍ: SOLO EL NOMBRE
-                            tit = emp_r
+                            ver, col, tit = True, obtener_color_por_nombre(emp_r), emp_r
                         
                         if ver and fecha_r:
                             try:
                                 d_iso = datetime.strptime(fecha_r, "%d/%m/%Y").strftime("%Y-%m-%d")
-                                events.append({
-                                    "title": tit, 
-                                    "start": d_iso, 
-                                    "end": d_iso, 
-                                    "backgroundColor": col, 
-                                    "borderColor": col,
-                                    "allDay": True,
-                                    "textColor": "#FFFFFF"
-                                })
+                                events.append({"title": tit, "start": d_iso, "end": d_iso, "backgroundColor": col, "borderColor": col, "allDay": True, "textColor": "#FFFFFF"})
                             except: pass 
                     
                     if events:
-                        calendar_options = {
-                            "editable": False,
-                            "height": 700,
-                            "initialDate": datetime.now().strftime("%Y-%m-%d"),
-                            "headerToolbar": {
-                                "left": "today prev,next",
-                                "center": "title",
-                                "right": "dayGridMonth,listMonth"
-                            },
-                            "initialView": "dayGridMonth",
-                            "locale": "es",
-                            "firstDay": 1,
-                            "buttonText": {"today": "Hoy", "month": "Mes", "list": "Lista"}
-                        }
-                        
                         clave_dinamica = f"cal_admin_clean_{len(events)}_{len(sel_users)}"
-                        calendar(events=events, options=calendar_options, key=clave_dinamica)
+                        calendar(events=events, options={
+                            "editable": False, "height": 700, 
+                            "initialDate": datetime.now().strftime("%Y-%m-%d"),
+                            "headerToolbar": {"left": "today prev,next", "center": "title", "right": "dayGridMonth,listMonth"},
+                            "initialView": "dayGridMonth", "locale": "es", "firstDay": 1,
+                            "buttonText": {"today": "Hoy", "month": "Mes", "list": "Lista"}
+                        }, key=clave_dinamica)
                         st.caption("⬛ Festivos Empresa | 🎨 Vacaciones (Solo Nombre)")
-                    else:
-                        st.info("No hay eventos.")
-                else:
-                    st.warning("Sin datos.")
+                    else: st.info("No hay eventos.")
+                else: st.warning("Sin datos.")
 
 
 
