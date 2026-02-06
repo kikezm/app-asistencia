@@ -180,7 +180,8 @@ if token_acceso == "ADMIN":
     if pwd == ADMIN_PASSWORD:
         st.sidebar.success("Acceso Concedido")
         
-        menu = ["Generar Usuarios", "Calendario y Festivos", "🔧 Corrección de Fichajes", "Auditoría e Informes", "⚡ Descargar CSV Simulación"]
+        # MENÚ LIMPIO (Ya no está el generador)
+        menu = ["Generar Usuarios", "Calendario y Festivos", "🔧 Corrección de Fichajes", "Auditoría e Informes"]
         opcion = st.sidebar.radio("Ir a:", menu)
         
         # --- A. USUARIOS ---
@@ -441,29 +442,6 @@ if token_acceso == "ADMIN":
                             }, key=f"audit_{f_emp}")
                             st.caption("🔵 >8h | 🟠 5-8h | 🔴 <5h")
                         else: st.warning("Sin datos completos.")
-
-        # --- E. DESCARGAR CSV (Simulación) ---
-        elif opcion == "⚡ Descargar CSV Simulación":
-            st.header("💾 Generar CSV Masivo")
-            if st.button("Generar CSV 2025"):
-                emps = ["Kike Zamora", "Victor Perez", "Marta Vitoria", "Maria Serrano"]
-                ini, fin = datetime(2025, 1, 1), datetime(2025, 12, 31)
-                rows = []
-                bar = st.progress(0)
-                dias = (fin - ini).days + 1
-                for i in range(dias):
-                    d = ini + timedelta(days=i)
-                    if d.weekday() > 4: continue
-                    f_str = d.strftime("%d/%m/%Y")
-                    for e in emps:
-                        s1 = generar_firma(f_str, "09:00:00", e, "ENTRADA", "Sim")
-                        rows.append([f_str, "09:00:00", e, "ENTRADA", "Sim", s1])
-                        s2 = generar_firma(f_str, "17:00:00", e, "SALIDA", "Sim")
-                        rows.append([f_str, "17:00:00", e, "SALIDA", "Sim", s2])
-                    bar.progress((i+1)/dias)
-                
-                df_sim = pd.DataFrame(rows, columns=["Fecha", "Hora", "Empleado", "Tipo", "Dispositivo", "Firma"])
-                st.download_button("📥 Descargar CSV", df_sim.to_csv(index=False, header=False).encode('utf-8'), "simulacion.csv", "text/csv")
 
     elif pwd:
         st.error("⛔ Contraseña incorrecta")
