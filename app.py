@@ -473,14 +473,11 @@ elif token_acceso:
                     with st.expander("⚙️ Opciones de Entrada (Auto-Salida)"):
                         usar_auto = st.checkbox("🔄 Fichar Salida automáticamente hoy")
                         if usar_auto:
-                            # Por defecto ponemos las 17:00 (o la hora que prefieras)
                             hora_auto = st.time_input("Hora de Salida prevista:", value=datetime_time(17, 0))
                     
                     if st.button("🟢 ENTRADA", use_container_width=True): 
-                        # 1. Registramos la ENTRADA normal
-                        registrar_fichaje(nombre, "ENTRADA", ua_string)
                         
-                        # 2. Si marcó el check, registramos la SALIDA futura inmediatamente
+                        # --- CAMBIO IMPORTANTE: PRIMERO LA SALIDA AUTOMÁTICA ---
                         if usar_auto:
                             try:
                                 sheet = conectar_google_sheets("Hoja 1")
@@ -494,12 +491,16 @@ elif token_acceso:
                                 # Generamos firma válida para esa hora futura
                                 firma = generar_firma(f_str, h_str, nombre, "SALIDA", disp_auto)
                                 
-                                # Insertamos la fila
+                                # Insertamos la fila DE SALIDA
                                 sheet.append_row([f_str, h_str, nombre, "SALIDA", disp_auto, firma])
                                 st.toast(f"✅ Salida programada para las {h_str}")
+                                # No hacemos rerun aquí, dejamos que lo haga registrar_fichaje
                                 
                             except Exception as e:
                                 st.error(f"Error al programar salida: {e}")
+
+                        # --- LUEGO LA ENTRADA (ESTA FUNCIÓN HACE EL RERUN AL FINAL) ---
+                        registrar_fichaje(nombre, "ENTRADA", ua_string)
 
                 elif estado == "DENTRO":
                     h_c = hora_entrada[:5] if hora_entrada else ""
@@ -560,7 +561,6 @@ elif token_acceso:
             else: st.warning("Calendario vacío.")
     else:
         st.error("⛔ Token inválido.")
-
 # ==========================================
 # 3. CASO: ZONA FANTASMA (Sin Token)
 # ==========================================
