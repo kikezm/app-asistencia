@@ -103,6 +103,7 @@ def obtener_nombre_por_token(token):
     return None
 
 def obtener_estado_actual(nombre):
+    """Devuelve una tupla: (ESTADO, HORA_ULTIMO_MOVIMIENTO)"""
     data = cargar_datos_registros()
     if not data: return "FUERA", None
     
@@ -113,7 +114,19 @@ def obtener_estado_actual(nombre):
     if df_emp.empty: return "FUERA", None
     
     df_emp = df_emp.dropna(subset=['Fecha', 'Hora'])
+    
+    # Convertimos fecha y hora de Excel a objetos datetime
     df_emp['DT'] = pd.to_datetime(df_emp['Fecha'] + ' ' + df_emp['Hora'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+    
+    # --- CORRECCIÓN IMPORTANTE: IGNORAR FUTURO ---
+    # Obtenemos la hora actual (quitamos la zona horaria para comparar con el Excel que no tiene zona)
+    ahora_naive = obtener_ahora().replace(tzinfo=None)
+    
+    # Solo nos interesan los fichajes que YA han ocurrido (DT <= ahora)
+    # Esto hace que la "Salida Programada" de las 17:00 sea invisible si son las 14:00
+    df_emp = df_emp[df_emp['DT'] <= ahora_naive]
+    # ---------------------------------------------
+    
     df_emp = df_emp.sort_values(by='DT')
     
     if df_emp.empty: return "FUERA", None
