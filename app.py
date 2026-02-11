@@ -458,20 +458,55 @@ elif token_acceso:
         
         with tab_fichar:
             ok, motivo = puede_fichar_hoy(nombre)
+            
             if not ok:
                 st.error("⛔ NO PUEDES FICHAR HOY")
                 st.warning(f"Motivo: **{motivo}**")
             else:
                 estado, hora_entrada = obtener_estado_actual(nombre)
                 st.write("---")
+                
                 if estado == "FUERA":
                     st.markdown("### 🏠 Estás FUERA. ¿Entrar?")
+                    
+                    # --- NUEVA FUNCIONALIDAD: SALIDA AUTOMÁTICA ---
+                    with st.expander("⚙️ Opciones de Entrada (Auto-Salida)"):
+                        usar_auto = st.checkbox("🔄 Fichar Salida automáticamente hoy")
+                        if usar_auto:
+                            # Por defecto ponemos las 17:00 (o la hora que prefieras)
+                            hora_auto = st.time_input("Hora de Salida prevista:", value=datetime_time(17, 0))
+                    
                     if st.button("🟢 ENTRADA", use_container_width=True): 
+                        # 1. Registramos la ENTRADA normal
                         registrar_fichaje(nombre, "ENTRADA", ua_string)
+                        
+                        # 2. Si marcó el check, registramos la SALIDA futura inmediatamente
+                        if usar_auto:
+                            try:
+                                sheet = conectar_google_sheets("Hoja 1")
+                                ahora = obtener_ahora()
+                                f_str = ahora.strftime("%d/%m/%Y")
+                                h_str = hora_auto.strftime("%H:%M:%S")
+                                
+                                # Indicamos en el dispositivo que fue programado
+                                disp_auto = f"{ua_string} (Auto-Programada)"
+                                
+                                # Generamos firma válida para esa hora futura
+                                firma = generar_firma(f_str, h_str, nombre, "SALIDA", disp_auto)
+                                
+                                # Insertamos la fila
+                                sheet.append_row([f_str, h_str, nombre, "SALIDA", disp_auto, firma])
+                                st.toast(f"✅ Salida programada para las {h_str}")
+                                
+                            except Exception as e:
+                                st.error(f"Error al programar salida: {e}")
+
                 elif estado == "DENTRO":
                     h_c = hora_entrada[:5] if hora_entrada else ""
                     st.markdown(f"### 🏭 Has entrado a las **{h_c}**. ¿Salir?")
-                    if st.button("🔴 SALIDA", use_container_width=True): 
+                    st.info("💡 Si ya programaste tu salida automática al entrar, no necesitas pulsar este botón (salvo que salgas antes de tiempo).")
+                    
+                    if st.button("🔴 SALIDA (Manual)", use_container_width=True): 
                         registrar_fichaje(nombre, "SALIDA", ua_string)
 
         with tab_mis_vacaciones:
