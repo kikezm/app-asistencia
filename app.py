@@ -19,15 +19,20 @@ def obtener_ahora():
     """Devuelve la fecha y hora actual exacta en tu zona horaria"""
     return datetime.now(ZONA_HORARIA)
 
-# --- CONFIGURACIÓN DE LA PÁGINA ---
-st.set_page_config(page_title="Control Asistencia", page_icon="🛡️")
+# --- CONFIGURACIÓN DE LA PÁGINA (MODO ANCHO ACTIVADO) ---
+st.set_page_config(
+    page_title="Control Asistencia", 
+    page_icon="🛡️", 
+    layout="wide" # <--- ESTO HACE QUE LAS TABLAS SE VEAN MÁS ANCHAS
+)
 
 # --- CARGA DE SECRETOS ---
 try:
     SECRET_KEY = st.secrets["general"]["secret_key"]
     ADMIN_PASSWORD = st.secrets["general"]["admin_password"]
+    # NUEVA CONTRASEÑA PARA INSPECCIÓN
+    INSPECTION_PASSWORD = st.secrets["general"]["inspection_password"]
     SHEET_NAME = st.secrets["general"]["sheet_name"]
-    # Si no tienes APP_URL en secrets, usa una por defecto para evitar errores
     APP_URL = st.secrets["general"].get("app_url", "https://tu-app.streamlit.app")
 except Exception as e:
     st.error(f"⚠️ Error Crítico: Faltan secretos de configuración. {e}")
@@ -54,7 +59,7 @@ def conectar_google_sheets(nombre_hoja_especifica):
     except:
         return None
 
-# --- FUNCIONES DE LECTURA CON CACHÉ INTELIGENTE Y REINTENTOS ---
+# --- FUNCIONES DE LECTURA ---
 def leer_con_reintento(nombre_hoja):
     max_intentos = 3
     for i in range(max_intentos):
@@ -103,7 +108,6 @@ def obtener_nombre_por_token(token):
     return None
 
 def obtener_estado_actual(nombre):
-    """Devuelve una tupla: (ESTADO, HORA_ULTIMO_MOVIMIENTO)"""
     data = cargar_datos_registros()
     if not data: return "FUERA", None
     
@@ -114,18 +118,11 @@ def obtener_estado_actual(nombre):
     if df_emp.empty: return "FUERA", None
     
     df_emp = df_emp.dropna(subset=['Fecha', 'Hora'])
-    
-    # Convertimos fecha y hora de Excel a objetos datetime
     df_emp['DT'] = pd.to_datetime(df_emp['Fecha'] + ' ' + df_emp['Hora'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
     
-    # --- CORRECCIÓN IMPORTANTE: IGNORAR FUTURO ---
-    # Obtenemos la hora actual (quitamos la zona horaria para comparar con el Excel que no tiene zona)
+    # IGNORAR FUTURO
     ahora_naive = obtener_ahora().replace(tzinfo=None)
-    
-    # Solo nos interesan los fichajes que YA han ocurrido (DT <= ahora)
-    # Esto hace que la "Salida Programada" de las 17:00 sea invisible si son las 14:00
     df_emp = df_emp[df_emp['DT'] <= ahora_naive]
-    # ---------------------------------------------
     
     df_emp = df_emp.sort_values(by='DT')
     
@@ -172,6 +169,82 @@ def obtener_color_por_nombre(nombre):
     indice = abs(hash(nombre)) % len(colores_contrastados)
     return colores_contrastados[indice]
 
+# --- FUNCION DE VISUALIZACION COMUN (Para Admin e Inspección) ---
+def renderizar_auditoria(es_admin=True):
+    st.header("🕵️ Auditoría y Control Horario")
+    data = cargar_datos_registros()
+    if data:
+        df = pd.DataFrame(data).dropna(subset=['Fecha', 'Hora'])
+        df['Estado'] = df.apply(verificar_integridad, axis=1)
+        df['DT'] = pd.to_datetime(df['Fecha'] + ' ' + df['Hora'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+        df = df.sort_values(by='DT', ascending=False)
+        df['Mes'] = df['DT'].dt.strftime('%m/%Y')
+        
+        c1, c2 = st.columns(2)
+        meses = ["Todos"] + sorted(df['Mes'].dropna().unique().tolist(), reverse=True)
+        f_mes = c1.selectbox("Mes:", meses)
+        emps = ["Todos"] + sorted(df['Empleado'].unique().tolist())
+        f_emp = c2.selectbox("Empleado:", emps)
+        
+        df_f = df.copy()
+        if f_mes != "Todos": df_f = df_f[df_f['Mes'] == f_mes]
+        if f_emp != "Todos": df_f = df_f[df_f['Empleado'] == f_emp]
+        
+        tot_s = 0
+        for e in df_f['Empleado'].unique():
+            sub = df_f[df_f['Empleado'] == e].sort_values(by='DT')
+            ent = None
+            for _, r in sub.iterrows():
+                if r['Tipo'] == 'ENTRADA': ent = r['DT']
+                elif r['Tipo'] == 'SALIDA' and ent:
+                    tot_s += (r['DT'] - ent).total_seconds()
+                    ent = None
+        st.metric("Horas Trabajadas (Selección)", f"{int(tot_s // 3600)}h {int((tot_s % 3600) // 60)}m")
+        
+        t_list, t_cal = st.tabs(["📄 Lista Detallada", "📅 Calendario Horas"])
+        with t_list:
+            cols = ['Fecha', 'Hora', 'Empleado', 'Tipo', 'Estado', 'Dispositivo']
+            st.dataframe(df_f.reindex(columns=cols), use_container_width=True)
+            
+            # Solo permitimos descargar Excel al Admin o Inspección (ambos en este caso)
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                df_f.reindex(columns=cols).to_excel(writer, index=False)
+            st.download_button("📥 Descargar Informe Excel", buffer.getvalue(), "Reporte_Auditoria.xlsx")
+
+        with t_cal:
+            if f_emp == "Todos":
+                st.info("Selecciona un empleado para ver sus horas diarias.")
+            else:
+                df_calc = df_f.sort_values(by='DT')
+                horas_dia, ent = {}, None
+                for _, r in df_calc.iterrows():
+                    if r['Tipo'] == 'ENTRADA': ent = r['DT']
+                    elif r['Tipo'] == 'SALIDA' and ent:
+                        d = (r['DT'] - ent).total_seconds()
+                        k = ent.strftime("%Y-%m-%d")
+                        horas_dia[k] = horas_dia.get(k, 0) + d
+                        ent = None
+                
+                evs = []
+                for k, v in horas_dia.items():
+                    h, m = int(v//3600), int((v%3600)//60)
+                    c = "#1976D2"
+                    if h < 5: c = "#D32F2F"
+                    elif h < 8: c = "#F57C00"
+                    evs.append({"title": f"⏱️ {h}h {m}m", "start": k, "end": k, "allDay": True, "backgroundColor": c, "borderColor": c, "textColor": "#FFF"})
+                
+                if evs:
+                    calendar(events=evs, options={
+                        "initialDate": datetime.now().strftime("%Y-%m-%d"),
+                        "headerToolbar": {"left": "prev,next", "center": "title", "right": "dayGridMonth"},
+                        "initialView": "dayGridMonth", "locale": "es", "firstDay": 1
+                    }, key=f"audit_{f_emp}_{es_admin}") # Key diferente para evitar conflictos
+                    st.caption("🔵 >8h | 🟠 5-8h | 🔴 <5h")
+                else: st.warning("Sin datos completos.")
+    else:
+        st.warning("No hay registros disponibles.")
+
 # --- INTERFAZ PRINCIPAL ---
 try:
     ua_string = st_js.st_javascript("navigator.userAgent")
@@ -184,24 +257,38 @@ token_acceso = params.get("token", None)
 st.title("🛡️ Control de Asistencia")
 
 # ==========================================
-# 1. CASO: ACCESO ADMINISTRADOR (Token Secreto)
+# 1. CASO: ACCESO INSPECCIÓN (Solo Lectura)
 # ==========================================
-if token_acceso == "ADMIN": 
+if token_acceso == "INSPECCION":
+    st.sidebar.title("🔐 Inspección Laboral")
+    pwd_insp = st.sidebar.text_input("Clave de Acceso", type="password")
+    
+    if pwd_insp == INSPECTION_PASSWORD:
+        st.sidebar.success("Acceso Autorizado")
+        st.info("Modo de Visualización: Inspección")
+        # LLAMAMOS A LA FUNCIÓN DE AUDITORÍA
+        renderizar_auditoria(es_admin=False)
+    elif pwd_insp:
+        st.error("⛔ Clave incorrecta")
+    else:
+        st.info("Introduzca la clave facilitada por la empresa.")
+
+# ==========================================
+# 2. CASO: ACCESO ADMINISTRADOR
+# ==========================================
+elif token_acceso == "ADMIN": 
     st.sidebar.title("🔐 Administración")
     pwd = st.sidebar.text_input("Contraseña", type="password")
     
     if pwd == ADMIN_PASSWORD:
         st.sidebar.success("Acceso Concedido")
         
-        # MENÚ LIMPIO (Ya no está el generador)
         menu = ["Generar Usuarios", "Calendario y Festivos", "🔧 Corrección de Fichajes", "Auditoría e Informes"]
         opcion = st.sidebar.radio("Ir a:", menu)
         
         # --- A. USUARIOS ---
         if opcion == "Generar Usuarios":
             st.header("👥 Gestión de Empleados")
-            
-            # Formulario
             with st.form("new_user"):
                 st.subheader("Nuevo Alta")
                 n_nombre = st.text_input("Nombre Completo")
@@ -214,10 +301,8 @@ if token_acceso == "ADMIN":
                         st.success(f"✅ Creado: {n_nombre}")
                         time.sleep(1)
                         st.rerun()
-                    else:
-                        st.error("El nombre no puede estar vacío.")
+                    else: st.error("El nombre no puede estar vacío.")
             
-            # Tabla Usuarios
             st.write("---")
             st.subheader("📋 Directorio de Accesos")
             usuarios = cargar_datos_usuarios()
@@ -227,16 +312,11 @@ if token_acceso == "ADMIN":
                     base = APP_URL
                     df_u['Enlace de Acceso'] = df_u['ID'].apply(lambda x: f"{base}/?token={x}")
                     df_mostrar = df_u[['Nombre', 'Enlace de Acceso']]
-                    
-                    st.dataframe(
-                        df_mostrar,
-                        column_config={
-                            "Nombre": st.column_config.TextColumn("Empleado", width="medium"),
-                            "Enlace de Acceso": st.column_config.LinkColumn("Link Directo", display_text=f"{base}/?token=...")
-                        },
-                        hide_index=True, use_container_width=True
-                    )
-                    with st.expander("Ver enlaces en texto plano (Copiar/Pegar)"):
+                    st.dataframe(df_mostrar, column_config={
+                        "Nombre": st.column_config.TextColumn("Empleado", width="medium"),
+                        "Enlace de Acceso": st.column_config.LinkColumn("Link Directo", display_text=f"{base}/?token=...")
+                    }, hide_index=True, use_container_width=True)
+                    with st.expander("Ver enlaces en texto plano"):
                         st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
                 else: st.error("Error columnas Usuarios.")
             else: st.info("No hay usuarios.")
@@ -244,7 +324,7 @@ if token_acceso == "ADMIN":
         # --- B. CALENDARIO ---
         elif opcion == "Calendario y Festivos":
             st.header("📅 Calendario Laboral")
-            t_gest, t_vis = st.tabs(["✍️ Gestión (Añadir/Borrar)", "👀 Visualizar"])
+            t_gest, t_vis = st.tabs(["✍️ Gestión", "👀 Visualizar"])
             
             with t_gest:
                 st.subheader("1. Añadir Nuevos Días")
@@ -263,8 +343,7 @@ if token_acceso == "ADMIN":
                     motivo = st.text_input("Motivo")
                     
                     if st.form_submit_button("➕ Añadir"):
-                        if len(rango_fechas) == 0:
-                            st.error("Selecciona fechas.")
+                        if len(rango_fechas) == 0: st.error("Selecciona fechas.")
                         else:
                             d_ini = rango_fechas[0]
                             d_fin = rango_fechas[1] if len(rango_fechas) > 1 else d_ini
@@ -286,7 +365,6 @@ if token_acceso == "ADMIN":
                 st.write("---")
                 st.subheader("2. 📝 Modificar o Borrar")
                 st.info("Haz clic en una celda para editar. Selecciona fila y pulsa Supr para borrar.")
-                
                 data = cargar_datos_calendario()
                 if data:
                     df = pd.DataFrame(data)
@@ -294,13 +372,11 @@ if token_acceso == "ADMIN":
                         df['Aux'] = pd.to_datetime(df['Fecha'], format='%d/%m/%Y', errors='coerce')
                         df = df.sort_values(by='Aux', ascending=False).drop(columns=['Aux'])
                     
-                    df_editado = st.data_editor(
-                        df, num_rows="dynamic", use_container_width=True, key="editor_vacaciones",
+                    df_editado = st.data_editor(df, num_rows="dynamic", use_container_width=True, key="editor_vacaciones",
                         column_config={
                             "Fecha": st.column_config.TextColumn("Fecha (DD/MM/YYYY)"),
                             "Tipo": st.column_config.SelectboxColumn("Tipo", options=["GLOBAL", "INDIVIDUAL"]),
-                        }
-                    )
+                        })
                     
                     if st.button("💾 Guardar Cambios Tabla", type="primary"):
                         try:
@@ -309,7 +385,7 @@ if token_acceso == "ADMIN":
                             sheet.clear()
                             sheet.update(vals)
                             st.cache_data.clear()
-                            st.success("Calendario actualizado.")
+                            st.success("Actualizado.")
                             time.sleep(1)
                             st.rerun()
                         except Exception as e: st.error(e)
@@ -335,10 +411,8 @@ if token_acceso == "ADMIN":
                         fecha_r = str(r.get('Fecha', '')).strip()
                         motivo_r = str(r.get('Motivo', '')).strip()
                         
-                        if tipo_r == 'GLOBAL':
-                            ver, col, tit = True, "#000000", f"🏢 {motivo_r}"
-                        elif tipo_r == 'INDIVIDUAL' and emp_r in sel_users:
-                            ver, col, tit = True, obtener_color_por_nombre(emp_r), emp_r
+                        if tipo_r == 'GLOBAL': ver, col, tit = True, "#000000", f"🏢 {motivo_r}"
+                        elif tipo_r == 'INDIVIDUAL' and emp_r in sel_users: ver, col, tit = True, obtener_color_por_nombre(emp_r), emp_r
                         
                         if ver and fecha_r:
                             try:
@@ -384,83 +458,15 @@ if token_acceso == "ADMIN":
                         st.rerun()
                     except Exception as e: st.error(e)
 
-        # --- D. AUDITORÍA ---
+        # --- D. AUDITORÍA (AHORA LLAMA A LA FUNCIÓN COMÚN) ---
         elif opcion == "Auditoría e Informes":
-            st.header("🕵️ Auditoría")
-            data = cargar_datos_registros()
-            if data:
-                df = pd.DataFrame(data).dropna(subset=['Fecha', 'Hora'])
-                df['Estado'] = df.apply(verificar_integridad, axis=1)
-                df['DT'] = pd.to_datetime(df['Fecha'] + ' ' + df['Hora'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
-                df = df.sort_values(by='DT', ascending=False)
-                df['Mes'] = df['DT'].dt.strftime('%m/%Y')
-                
-                c1, c2 = st.columns(2)
-                meses = ["Todos"] + sorted(df['Mes'].dropna().unique().tolist(), reverse=True)
-                f_mes = c1.selectbox("Mes:", meses)
-                emps = ["Todos"] + sorted(df['Empleado'].unique().tolist())
-                f_emp = c2.selectbox("Empleado:", emps)
-                
-                df_f = df.copy()
-                if f_mes != "Todos": df_f = df_f[df_f['Mes'] == f_mes]
-                if f_emp != "Todos": df_f = df_f[df_f['Empleado'] == f_emp]
-                
-                tot_s = 0
-                for e in df_f['Empleado'].unique():
-                    sub = df_f[df_f['Empleado'] == e].sort_values(by='DT')
-                    ent = None
-                    for _, r in sub.iterrows():
-                        if r['Tipo'] == 'ENTRADA': ent = r['DT']
-                        elif r['Tipo'] == 'SALIDA' and ent:
-                            tot_s += (r['DT'] - ent).total_seconds()
-                            ent = None
-                st.metric("Horas Trabajadas", f"{int(tot_s // 3600)}h {int((tot_s % 3600) // 60)}m")
-                
-                t_list, t_cal = st.tabs(["📄 Lista", "📅 Calendario Horas"])
-                with t_list:
-                    cols = ['Fecha', 'Hora', 'Empleado', 'Tipo', 'Estado', 'Dispositivo']
-                    st.dataframe(df_f.reindex(columns=cols), use_container_width=True)
-                    buffer = io.BytesIO()
-                    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                        df_f.reindex(columns=cols).to_excel(writer, index=False)
-                    st.download_button("📥 Excel", buffer.getvalue(), "Reporte.xlsx")
-
-                with t_cal:
-                    if f_emp == "Todos":
-                        st.info("Selecciona un empleado para ver sus horas diarias.")
-                    else:
-                        df_calc = df_f.sort_values(by='DT')
-                        horas_dia, ent = {}, None
-                        for _, r in df_calc.iterrows():
-                            if r['Tipo'] == 'ENTRADA': ent = r['DT']
-                            elif r['Tipo'] == 'SALIDA' and ent:
-                                d = (r['DT'] - ent).total_seconds()
-                                k = ent.strftime("%Y-%m-%d")
-                                horas_dia[k] = horas_dia.get(k, 0) + d
-                                ent = None
-                        
-                        evs = []
-                        for k, v in horas_dia.items():
-                            h, m = int(v//3600), int((v%3600)//60)
-                            c = "#1976D2"
-                            if h < 5: c = "#D32F2F"
-                            elif h < 8: c = "#F57C00"
-                            evs.append({"title": f"⏱️ {h}h {m}m", "start": k, "end": k, "allDay": True, "backgroundColor": c, "borderColor": c, "textColor": "#FFF"})
-                        
-                        if evs:
-                            calendar(events=evs, options={
-                                "initialDate": datetime.now().strftime("%Y-%m-%d"),
-                                "headerToolbar": {"left": "prev,next", "center": "title", "right": "dayGridMonth"},
-                                "initialView": "dayGridMonth", "locale": "es", "firstDay": 1
-                            }, key=f"audit_{f_emp}")
-                            st.caption("🔵 >8h | 🟠 5-8h | 🔴 <5h")
-                        else: st.warning("Sin datos completos.")
+            renderizar_auditoria(es_admin=True)
 
     elif pwd:
         st.error("⛔ Contraseña incorrecta")
 
 # ==========================================
-# 2. CASO: ACCESO EMPLEADO (Token UUID)
+# 3. CASO: ACCESO EMPLEADO (Token UUID)
 # ==========================================
 elif token_acceso:
     nombre = obtener_nombre_por_token(token_acceso)
@@ -471,7 +477,6 @@ elif token_acceso:
         
         with tab_fichar:
             ok, motivo = puede_fichar_hoy(nombre)
-            
             if not ok:
                 st.error("⛔ NO PUEDES FICHAR HOY")
                 st.warning(f"Motivo: **{motivo}**")
@@ -481,44 +486,30 @@ elif token_acceso:
                 
                 if estado == "FUERA":
                     st.markdown("### 🏠 Estás FUERA. ¿Entrar?")
-                    
-                    # --- NUEVA FUNCIONALIDAD: SALIDA AUTOMÁTICA ---
                     with st.expander("⚙️ Opciones de Entrada (Auto-Salida)"):
                         usar_auto = st.checkbox("🔄 Fichar Salida automáticamente hoy")
                         if usar_auto:
                             hora_auto = st.time_input("Hora de Salida prevista:", value=datetime_time(17, 0))
                     
                     if st.button("🟢 ENTRADA", use_container_width=True): 
-                        
-                        # --- CAMBIO IMPORTANTE: PRIMERO LA SALIDA AUTOMÁTICA ---
                         if usar_auto:
                             try:
                                 sheet = conectar_google_sheets("Hoja 1")
                                 ahora = obtener_ahora()
                                 f_str = ahora.strftime("%d/%m/%Y")
                                 h_str = hora_auto.strftime("%H:%M:%S")
-                                
-                                # Indicamos en el dispositivo que fue programado
                                 disp_auto = f"{ua_string} (Auto-Programada)"
-                                
-                                # Generamos firma válida para esa hora futura
                                 firma = generar_firma(f_str, h_str, nombre, "SALIDA", disp_auto)
-                                
-                                # Insertamos la fila DE SALIDA
                                 sheet.append_row([f_str, h_str, nombre, "SALIDA", disp_auto, firma])
                                 st.toast(f"✅ Salida programada para las {h_str}")
-                                # No hacemos rerun aquí, dejamos que lo haga registrar_fichaje
-                                
-                            except Exception as e:
-                                st.error(f"Error al programar salida: {e}")
+                            except Exception as e: st.error(f"Error al programar salida: {e}")
 
-                        # --- LUEGO LA ENTRADA (ESTA FUNCIÓN HACE EL RERUN AL FINAL) ---
                         registrar_fichaje(nombre, "ENTRADA", ua_string)
 
                 elif estado == "DENTRO":
                     h_c = hora_entrada[:5] if hora_entrada else ""
                     st.markdown(f"### 🏭 Has entrado a las **{h_c}**. ¿Salir?")
-                    st.info("💡 Si ya programaste tu salida automática al entrar, no necesitas pulsar este botón (salvo que salgas antes de tiempo).")
+                    st.info("💡 Si ya programaste tu salida automática, no necesitas pulsar esto.")
                     
                     if st.button("🔴 SALIDA (Manual)", use_container_width=True): 
                         registrar_fichaje(nombre, "SALIDA", ua_string)
@@ -545,15 +536,12 @@ elif token_acceso:
                     fecha_r = str(r.get('Fecha', '')).strip()
                     motivo_r = str(r.get('Motivo', '')).strip()
                     
-                    if tipo_r == 'GLOBAL':
-                        ver, col, tit = True, "#000000", f"🏢 {motivo_r}"
+                    if tipo_r == 'GLOBAL': ver, col, tit = True, "#000000", f"🏢 {motivo_r}"
                     elif tipo_r == 'INDIVIDUAL':
                         if emp_r in sel_users:
                             ver = True
-                            if emp_r == nombre:
-                                col, tit = "#109618", "TÚ"
-                            else:
-                                col, tit = obtener_color_por_nombre(emp_r), emp_r
+                            if emp_r == nombre: col, tit = "#109618", "TÚ"
+                            else: col, tit = obtener_color_por_nombre(emp_r), emp_r
                     
                     if ver and fecha_r:
                         try:
@@ -574,14 +562,11 @@ elif token_acceso:
             else: st.warning("Calendario vacío.")
     else:
         st.error("⛔ Token inválido.")
+
 # ==========================================
-# 3. CASO: ZONA FANTASMA (Sin Token)
+# 4. CASO: SIN TOKEN
 # ==========================================
 else:
-    st.markdown("""
-        <style>
-        .stApp { background-color: #000000; color: #333333; }
-        </style>
-        """, unsafe_allow_html=True)
+    st.markdown("""<style>.stApp { background-color: #000000; color: #333333; }</style>""", unsafe_allow_html=True)
     st.warning("⚠️ **Acceso Restringido**")
     st.write("Esta aplicación requiere un enlace de acceso seguro personal.")
